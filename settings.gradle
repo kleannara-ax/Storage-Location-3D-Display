@@ -1,0 +1,5 @@
+rootProject.name = 'Storage-Location-3D-Display'
+
+include 'core'
+include 'module-user'
+include 'module-inventory'
