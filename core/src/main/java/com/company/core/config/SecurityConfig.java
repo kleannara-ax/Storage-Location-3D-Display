@@ -19,11 +19,13 @@ public class SecurityConfig {
             .sessionManagement(session ->
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
+            .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()))
             .authorizeHttpRequests(auth -> auth
                 // Public API endpoints for each module
                 .requestMatchers("/user-api/**").permitAll()
                 .requestMatchers("/inventory-api/**").permitAll()
                 .requestMatchers("/actuator/**").permitAll()
+                .requestMatchers("/h2-console/**").permitAll()
                 .anyRequest().authenticated()
             );
 

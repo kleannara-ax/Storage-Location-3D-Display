@@ -35,3 +35,8 @@ out/
 
 ### Mac ###
 .DS_Store
+__pycache__/
+
+### Large files ###
+db_viewer/inventory.db
+sql/oracle/09_insert_stkka_data.sql

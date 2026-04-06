@@ -20,6 +20,9 @@ dependencies {
     // MariaDB Driver
     runtimeOnly 'org.mariadb.jdbc:mariadb-java-client'
 
+    // H2 Database (for local/test profile)
+    implementation 'com.h2database:h2'
+
     // Submodule dependencies
     implementation project(':module-user')
     implementation project(':module-inventory')

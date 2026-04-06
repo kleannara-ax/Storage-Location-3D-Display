@@ -13,6 +13,8 @@ import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
+import org.springframework.beans.factory.annotation.Value;
+
 import javax.sql.DataSource;
 import java.util.HashMap;
 import java.util.Map;
@@ -21,6 +23,8 @@ import java.util.Map;
  * OracleDB DataSource configuration for module-inventory.
  * This module uses a separate Oracle database, isolated from the default MariaDB.
  * Core module is NOT modified - this config is self-contained within the inventory module.
+ *
+ * Dialect and ddl-auto are configurable via properties for local/test profiles.
  */
 @Configuration
 @EnableTransactionManagement
@@ -31,10 +35,16 @@ import java.util.Map;
 )
 public class InventoryDataSourceConfig {
 
+    @Value("${inventory.jpa.hibernate.dialect:org.hibernate.dialect.OracleDialect}")
+    private String hibernateDialect;
+
+    @Value("${inventory.jpa.hibernate.ddl-auto:none}")
+    private String ddlAuto;
+
     // ============================================================
     // DataSource Properties (from application.yml -> spring.datasource.inventory)
     // ============================================================
-    @Bean
+    @Bean(name = "inventoryDataSourceProperties")
     @ConfigurationProperties(prefix = "spring.datasource.inventory")
     public DataSourceProperties inventoryDataSourceProperties() {
         return new DataSourceProperties();
@@ -48,7 +58,7 @@ public class InventoryDataSourceConfig {
     }
 
     // ============================================================
-    // EntityManagerFactory for OracleDB
+    // EntityManagerFactory (dialect configurable for local H2 / prod Oracle)
     // ============================================================
     @Bean(name = "inventoryEntityManagerFactory")
     public LocalContainerEntityManagerFactoryBean inventoryEntityManagerFactory(
@@ -56,8 +66,8 @@ public class InventoryDataSourceConfig {
             @Qualifier("inventoryDataSource") DataSource dataSource) {
 
         Map<String, Object> properties = new HashMap<>();
-        properties.put("hibernate.hbm2ddl.auto", "none");
-        properties.put("hibernate.dialect", "org.hibernate.dialect.OracleDialect");
+        properties.put("hibernate.hbm2ddl.auto", ddlAuto);
+        properties.put("hibernate.dialect", hibernateDialect);
         properties.put("hibernate.show_sql", true);
         properties.put("hibernate.format_sql", true);
 

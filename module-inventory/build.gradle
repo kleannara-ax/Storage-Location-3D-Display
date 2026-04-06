@@ -17,6 +17,9 @@ dependencies {
     // Oracle JDBC Driver (OracleDB)
     runtimeOnly 'com.oracle.database.jdbc:ojdbc11:23.3.0.23.09'
 
+    // H2 Database (for local/test profile)
+    runtimeOnly 'com.h2database:h2'
+
     // Test
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
