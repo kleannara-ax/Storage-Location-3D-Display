@@ -104,7 +104,10 @@ td.null { color: #5a6d8e; font-style: italic; }
   <h1>Storage-Location-3D-Display</h1>
   <span class="badge">DB Viewer</span>
   <span class="badge" style="background:rgba(160,176,208,0.08);color:#a0b0d0;border:1px solid rgba(160,176,208,0.1);">SQLite (Mirrored from Oracle)</span>
-  <a href="/structure" style="margin-left:auto;color:#a0b0d0;text-decoration:none;font-size:13px;padding:6px 16px;background:rgba(110,168,254,0.08);border:1px solid rgba(110,168,254,0.12);border-radius:8px;transition:all 0.2s;">📦 구조 조회 →</a>
+  <div style="margin-left:auto;display:flex;gap:8px;">
+    <a href="/structure" style="color:#a0b0d0;text-decoration:none;font-size:13px;padding:6px 16px;background:rgba(110,168,254,0.08);border:1px solid rgba(110,168,254,0.12);border-radius:8px;transition:all 0.2s;">📦 구조 조회</a>
+    <a href="/aging" style="color:#a0b0d0;text-decoration:none;font-size:13px;padding:6px 16px;background:rgba(110,168,254,0.08);border:1px solid rgba(110,168,254,0.12);border-radius:8px;transition:all 0.2s;">📊 출고 연령 분석</a>
+  </div>
 </div>
 <div class="container">
   <div class="sidebar">
@@ -372,7 +375,7 @@ def api_tables():
 
 @app.route('/api/schema/<table_name>')
 def api_schema(table_name):
-    if table_name not in ['ZONMA', 'LOCMA', 'STKKA']:
+    if table_name not in ['ZONMA', 'LOCMA', 'STKKA', 'TASDI']:
         return jsonify({'error': 'Invalid table name'}), 400
     conn = get_db()
     cols_raw = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
@@ -448,12 +451,12 @@ def api_dashboard():
     for name in ['ZONMA', 'LOCMA', 'STKKA', 'TASDI']:
         cnt = conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
         cols = conn.execute(f"PRAGMA table_info({name})").fetchall()
-        label_map = {'ZONMA': 'ZONMA (Zone Master)', 'LOCMA': 'LOCMA (Location Master)', 'STKKA': 'STKKA (Stock)'}
-        stats.append({'label': label_map[name], 'value': f'{cnt:,}', 'sub': f'{len(cols)} columns'})
+        label_map = {'ZONMA': 'ZONMA (Zone Master)', 'LOCMA': 'LOCMA (Location Master)', 'STKKA': 'STKKA (Stock)', 'TASDI': 'TASDI (출고데이터)'}
+        stats.append({'label': label_map.get(name, name), 'value': f'{cnt:,}', 'sub': f'{len(cols)} columns'})
     
     # Total records
-    total = sum(conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in ['ZONMA','LOCMA','STKKA'])
-    stats.append({'label': 'Total Records', 'value': f'{total:,}', 'sub': '3 tables'})
+    total = sum(conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in ['ZONMA','LOCMA','STKKA','TASDI'])
+    stats.append({'label': 'Total Records', 'value': f'{total:,}', 'sub': '4 tables'})
     
     # Distinct WAREKY
     wk = conn.execute("SELECT COUNT(DISTINCT WAREKY) FROM ZONMA").fetchone()[0]
@@ -964,6 +967,227 @@ def structure_page():
     return render_template_string(STRUCTURE_HTML)
 
 
+# ================================================
+# 출고 제품 연령 분석 (Outbound Product Aging Analysis)
+# ================================================
+@app.route('/aging')
+def aging_page():
+    return render_template_string(AGING_HTML)
+
+
+@app.route('/api/aging/summary')
+def api_aging_summary():
+    """출고 제품 연령 분석 요약 데이터"""
+    from_month = request.args.get('from', '')  # YYYYMM
+    to_month = request.args.get('to', '')      # YYYYMM
+    plant = request.args.get('plant', '')       # LOTA02 e.g. P100
+    warehouse = request.args.get('warehouse', '')  # AREAKY e.g. 280
+
+    conn = get_db()
+
+    # Build WHERE clause based on ACTCDT (실제완료날짜)
+    conditions = ["ACTCDT IS NOT NULL AND ACTCDT != '' AND LOTA11 IS NOT NULL AND LOTA11 != ''"]
+    params = []
+    if from_month:
+        conditions.append("SUBSTR(ACTCDT,1,6) >= ?")
+        params.append(from_month)
+    if to_month:
+        conditions.append("SUBSTR(ACTCDT,1,6) <= ?")
+        params.append(to_month)
+    if plant:
+        conditions.append("LOTA02 = ?")
+        params.append(plant)
+    if warehouse:
+        conditions.append("AREAKY = ?")
+        params.append(warehouse)
+
+    where = " AND ".join(conditions)
+
+    # ---- 1) Monthly outbound quantity by UOM ----
+    sql_monthly_qty = f"""
+        SELECT SUBSTR(ACTCDT,1,6) as month,
+               SUOMKY as uom,
+               SUM(CAST(QTCOMP AS REAL)) as total_qty,
+               COUNT(*) as cnt
+        FROM TASDI
+        WHERE {where}
+        GROUP BY SUBSTR(ACTCDT,1,6), SUOMKY
+        ORDER BY month, uom
+    """
+    rows_qty = conn.execute(sql_monthly_qty, params).fetchall()
+    monthly_qty = {}
+    for r in rows_qty:
+        m = r['month']
+        if m not in monthly_qty:
+            monthly_qty[m] = {}
+        monthly_qty[m][r['uom']] = {'qty': r['total_qty'], 'cnt': r['cnt']}
+
+    # ---- 2) Inventory days (ACTCDT - LOTA11) distribution by month ----
+    sql_aging = f"""
+        SELECT SUBSTR(ACTCDT,1,6) as month,
+               ACTCDT, LOTA11,
+               CAST(QTCOMP AS REAL) as qty,
+               SUOMKY as uom,
+               SMEAKY as sku,
+               DESC01 as desc1,
+               LOTA02 as plant_code,
+               AREAKY as area
+        FROM TASDI
+        WHERE {where}
+        ORDER BY ACTCDT
+    """
+    rows_aging = conn.execute(sql_aging, params).fetchall()
+
+    from datetime import datetime
+    monthly_aging = {}
+    # Aging buckets: 0-7, 8-14, 15-30, 31-60, 61-90, 91-180, 181-365, 365+
+    bucket_keys = ['0-7', '8-14', '15-30', '31-60', '61-90', '91-180', '181-365', '365+']
+
+    for r in rows_aging:
+        m = r['month']
+        try:
+            d_act = datetime.strptime(r['ACTCDT'], '%Y%m%d')
+            d_mfg = datetime.strptime(r['LOTA11'], '%Y%m%d')
+            days = (d_act - d_mfg).days
+            if days < 0:
+                days = 0
+        except:
+            continue
+
+        if m not in monthly_aging:
+            monthly_aging[m] = {b: {'qty': 0, 'cnt': 0} for b in bucket_keys}
+            monthly_aging[m]['total_days'] = 0
+            monthly_aging[m]['total_cnt'] = 0
+            monthly_aging[m]['details'] = []
+
+        monthly_aging[m]['total_days'] += days
+        monthly_aging[m]['total_cnt'] += 1
+
+        # Determine bucket
+        if days <= 7:
+            b = '0-7'
+        elif days <= 14:
+            b = '8-14'
+        elif days <= 30:
+            b = '15-30'
+        elif days <= 60:
+            b = '31-60'
+        elif days <= 90:
+            b = '61-90'
+        elif days <= 180:
+            b = '91-180'
+        elif days <= 365:
+            b = '181-365'
+        else:
+            b = '365+'
+
+        monthly_aging[m][b]['qty'] += r['qty'] or 0
+        monthly_aging[m][b]['cnt'] += 1
+
+    # Compute averages
+    for m in monthly_aging:
+        tc = monthly_aging[m]['total_cnt']
+        monthly_aging[m]['avg_days'] = round(monthly_aging[m]['total_days'] / tc, 1) if tc > 0 else 0
+        del monthly_aging[m]['details']
+
+    # ---- 3) Available filters ----
+    plants_raw = conn.execute("SELECT DISTINCT LOTA02 FROM TASDI WHERE LOTA02 IS NOT NULL AND LOTA02 != '' ORDER BY LOTA02").fetchall()
+    plants = [{'code': r['LOTA02'], 'name': PLANT_NAMES.get(r['LOTA02'], r['LOTA02'])} for r in plants_raw]
+
+    warehouses_sql = "SELECT DISTINCT AREAKY FROM TASDI WHERE AREAKY IS NOT NULL AND AREAKY != ''"
+    wh_params = []
+    if plant:
+        warehouses_sql += " AND LOTA02 = ?"
+        wh_params.append(plant)
+    warehouses_sql += " ORDER BY AREAKY"
+    wh_raw = conn.execute(warehouses_sql, wh_params).fetchall()
+    warehouses = [r['AREAKY'] for r in wh_raw]
+
+    # Date range
+    date_range = conn.execute("SELECT MIN(SUBSTR(ACTCDT,1,6)), MAX(SUBSTR(ACTCDT,1,6)) FROM TASDI WHERE ACTCDT IS NOT NULL AND ACTCDT != ''").fetchone()
+
+    conn.close()
+
+    return jsonify({
+        'monthly_qty': monthly_qty,
+        'monthly_aging': monthly_aging,
+        'plants': plants,
+        'warehouses': warehouses,
+        'date_range': {'min': date_range[0], 'max': date_range[1]},
+        'bucket_keys': bucket_keys
+    })
+
+
+@app.route('/api/aging/detail')
+def api_aging_detail():
+    """출고 제품 연령 상세 데이터 (개별 건)"""
+    from_month = request.args.get('from', '')
+    to_month = request.args.get('to', '')
+    plant = request.args.get('plant', '')
+    warehouse = request.args.get('warehouse', '')
+    page = int(request.args.get('page', 0))
+    page_size = min(int(request.args.get('page_size', 50)), 200)
+
+    conn = get_db()
+    conditions = ["ACTCDT IS NOT NULL AND ACTCDT != '' AND LOTA11 IS NOT NULL AND LOTA11 != ''"]
+    params = []
+    if from_month:
+        conditions.append("SUBSTR(ACTCDT,1,6) >= ?")
+        params.append(from_month)
+    if to_month:
+        conditions.append("SUBSTR(ACTCDT,1,6) <= ?")
+        params.append(to_month)
+    if plant:
+        conditions.append("LOTA02 = ?")
+        params.append(plant)
+    if warehouse:
+        conditions.append("AREAKY = ?")
+        params.append(warehouse)
+
+    where = " AND ".join(conditions)
+
+    count = conn.execute(f"SELECT COUNT(*) FROM TASDI WHERE {where}", params).fetchone()[0]
+
+    sql = f"""
+        SELECT TASKKY, ACTCDT, LOTA11, LOTA02, AREAKY, LOCASR,
+               SMEAKY, DESC01, SUOMKY, CAST(QTCOMP AS REAL) as qty,
+               SKUKEY, LOTNUM
+        FROM TASDI
+        WHERE {where}
+        ORDER BY ACTCDT DESC, SMEAKY
+        LIMIT ? OFFSET ?
+    """
+    rows = conn.execute(sql, params + [page_size, page * page_size]).fetchall()
+
+    from datetime import datetime
+    result = []
+    for r in rows:
+        try:
+            d_act = datetime.strptime(r['ACTCDT'], '%Y%m%d')
+            d_mfg = datetime.strptime(r['LOTA11'], '%Y%m%d')
+            days = max(0, (d_act - d_mfg).days)
+        except:
+            days = None
+        result.append({
+            'task_key': r['TASKKY'],
+            'act_date': r['ACTCDT'],
+            'mfg_date': r['LOTA11'],
+            'plant': r['LOTA02'],
+            'plant_name': PLANT_NAMES.get(r['LOTA02'], r['LOTA02']),
+            'warehouse': r['AREAKY'],
+            'location': r['LOCASR'],
+            'sku': r['SMEAKY'],
+            'desc': r['DESC01'],
+            'uom': r['SUOMKY'],
+            'qty': r['qty'],
+            'days': days,
+            'lot': r['LOTNUM']
+        })
+
+    conn.close()
+    return jsonify({'rows': result, 'total': count, 'page': page, 'page_size': page_size})
+
+
 STRUCTURE_HTML = r"""
 <!DOCTYPE html>
 <html lang="ko">
@@ -1358,7 +1582,10 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
   <h1>저장 위치 구조 조회</h1>
   <span class="badge b1">Storage Location Structure</span>
   <span class="badge b2">거점 > 플랜트 > 저장위치 > 영역 > 구역 > 지번</span>
-  <a href="/" style="margin-left:auto;">← DB Viewer</a>
+  <div style="margin-left:auto;display:flex;gap:8px;">
+    <a href="/">← DB Viewer</a>
+    <a href="/aging">📊 출고 연령 분석</a>
+  </div>
 </div>
 
 <div class="layout">
@@ -2570,6 +2797,673 @@ window.addEventListener('load', () => {
 // Init
 // ========================
 loadTree();
+</script>
+</body>
+</html>
+"""
+
+
+AGING_HTML = r"""
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>출고 제품 연령 분석 | Outbound Aging Analysis</title>
+<style>
+:root {
+  --bg-primary: #080d1a;
+  --bg-secondary: #0e1529;
+  --bg-tertiary: #141d35;
+  --border: rgba(120,160,255,0.1);
+  --text-primary: #edf0f7;
+  --text-secondary: #a0b0d0;
+  --text-muted: #5a6d8e;
+  --accent: #6ea8fe;
+  --accent-dark: #4a8af0;
+  --green: #34d399;
+  --yellow: #fcd34d;
+  --purple: #b197fc;
+  --pink: #f472b6;
+  --orange: #fdba74;
+  --red: #fca5a5;
+  --glass: rgba(14,21,41,0.7);
+  --glass-border: rgba(120,160,255,0.08);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: 'Segoe UI', -apple-system, sans-serif; background: var(--bg-primary); color: var(--text-primary); }
+
+/* Header */
+.header {
+  background: linear-gradient(135deg, #0a1128 0%, #121d3a 50%, #162550 100%);
+  padding: 16px 24px;
+  border-bottom: 1px solid rgba(110,168,254,0.1);
+  display: flex; align-items: center; gap: 16px;
+  box-shadow: 0 4px 30px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03);
+}
+.header h1 { font-size: 18px; background: linear-gradient(135deg, #6ea8fe, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700; letter-spacing: 0.5px; }
+.header .badge { font-size: 11px; padding: 4px 12px; border-radius: 6px; backdrop-filter: blur(8px); }
+.header .b1 { background: rgba(110,168,254,0.12); color: var(--accent); border: 1px solid rgba(110,168,254,0.2); }
+.header .b2 { background: rgba(160,176,208,0.08); color: var(--text-secondary); border: 1px solid rgba(160,176,208,0.1); }
+.header a { color: var(--text-secondary); text-decoration: none; font-size: 13px; padding: 6px 16px; border-radius: 8px; background: rgba(110,168,254,0.08); border: 1px solid rgba(110,168,254,0.12); transition: all 0.2s; }
+.header a:hover { color: var(--accent); background: rgba(110,168,254,0.18); border-color: rgba(110,168,254,0.3); }
+
+/* Main layout */
+.main-content { padding: 20px 24px; max-width: 1600px; margin: 0 auto; }
+
+/* Filter bar */
+.filter-bar {
+  display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap;
+  padding: 20px; margin-bottom: 20px;
+  background: linear-gradient(135deg, rgba(14,21,41,0.9), rgba(20,29,53,0.85));
+  border: 1px solid var(--glass-border); border-radius: 14px;
+  backdrop-filter: blur(12px);
+}
+.filter-group { display: flex; flex-direction: column; gap: 6px; }
+.filter-group label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+.filter-group select, .filter-group input[type="month"] {
+  padding: 8px 14px; border-radius: 8px;
+  background: rgba(8,13,26,0.7); border: 1px solid var(--glass-border);
+  color: var(--text-primary); font-size: 13px;
+  transition: all 0.2s; cursor: pointer;
+  min-width: 140px;
+}
+.filter-group select:focus, .filter-group input[type="month"]:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(110,168,254,0.15);
+}
+.filter-group input[type="month"]::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
+.filter-bar .btn-search {
+  padding: 8px 24px; border: none; border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+  color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: all 0.25s; box-shadow: 0 4px 16px rgba(110,168,254,0.3);
+}
+.filter-bar .btn-search:hover { transform: translateY(-1px); box-shadow: 0 6px 24px rgba(110,168,254,0.4); }
+
+/* Summary cards */
+.summary-cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px; margin-bottom: 24px;
+}
+.summary-card {
+  padding: 18px 20px; border-radius: 14px;
+  background: linear-gradient(135deg, rgba(14,21,41,0.9), rgba(20,29,53,0.85));
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(12px);
+  transition: all 0.25s;
+}
+.summary-card:hover { border-color: rgba(110,168,254,0.25); box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+.summary-card .sc-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; font-weight: 600; }
+.summary-card .sc-value { font-size: 26px; font-weight: 700; color: var(--text-primary); }
+.summary-card .sc-sub { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.summary-card.accent .sc-value { background: linear-gradient(135deg, var(--accent), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.summary-card.green .sc-value { color: var(--green); }
+.summary-card.orange .sc-value { color: var(--orange); }
+.summary-card.pink .sc-value { color: var(--pink); }
+
+/* Section titles */
+.section-title {
+  font-size: 16px; font-weight: 700; margin-bottom: 16px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--glass-border);
+  background: linear-gradient(90deg, var(--accent), var(--purple));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+
+/* Chart container */
+.chart-section {
+  background: linear-gradient(135deg, rgba(14,21,41,0.9), rgba(20,29,53,0.85));
+  border: 1px solid var(--glass-border); border-radius: 14px;
+  backdrop-filter: blur(12px); padding: 20px; margin-bottom: 24px;
+}
+
+/* Bar chart (CSS-only) */
+.bar-chart { display: flex; align-items: flex-end; gap: 4px; height: 220px; padding: 0 10px; }
+.bar-group { display: flex; flex-direction: column; align-items: center; flex: 1; gap: 4px; }
+.bar-stack { display: flex; flex-direction: column; justify-content: flex-end; width: 100%; height: 200px; border-radius: 6px 6px 0 0; overflow: hidden; position: relative; }
+.bar-segment { width: 100%; transition: height 0.6s ease; min-height: 1px; cursor: pointer; position: relative; }
+.bar-segment:hover { filter: brightness(1.3); }
+.bar-label { font-size: 11px; color: var(--text-muted); text-align: center; white-space: nowrap; }
+.bar-value { font-size: 11px; color: var(--text-secondary); text-align: center; font-weight: 600; }
+
+/* Aging distribution chart */
+.aging-chart { width: 100%; }
+.aging-month-row {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 10px; padding: 8px 12px;
+  background: rgba(8,13,26,0.4); border-radius: 10px; border: 1px solid rgba(120,160,255,0.05);
+  transition: all 0.2s;
+}
+.aging-month-row:hover { background: rgba(110,168,254,0.06); border-color: rgba(110,168,254,0.12); }
+.aging-month-label { width: 80px; font-size: 13px; font-weight: 600; color: var(--text-secondary); flex-shrink: 0; }
+.aging-bar-container { flex: 1; height: 32px; display: flex; border-radius: 6px; overflow: hidden; background: rgba(8,13,26,0.5); }
+.aging-bar-seg {
+  height: 100%; display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 600; color: rgba(255,255,255,0.9);
+  transition: width 0.6s ease; cursor: pointer; position: relative;
+  min-width: 0;
+}
+.aging-bar-seg:hover { filter: brightness(1.2); z-index: 1; }
+.aging-bar-seg span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; }
+.aging-avg { width: 90px; text-align: right; font-size: 13px; font-weight: 700; color: var(--text-primary); flex-shrink: 0; }
+.aging-count { width: 70px; text-align: right; font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
+
+/* Aging bucket colors */
+.bucket-0-7   { background: #22c55e; }
+.bucket-8-14  { background: #4ade80; }
+.bucket-15-30 { background: #a3e635; }
+.bucket-31-60 { background: #facc15; }
+.bucket-61-90 { background: #fb923c; }
+.bucket-91-180 { background: #f87171; }
+.bucket-181-365 { background: #dc2626; }
+.bucket-365p  { background: #991b1b; }
+
+/* Legend */
+.aging-legend {
+  display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; padding-top: 12px;
+  border-top: 1px solid var(--glass-border);
+}
+.aging-legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.aging-legend-dot { width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0; }
+
+/* Qty table */
+.qty-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.qty-table th {
+  background: var(--bg-secondary); color: var(--text-secondary); font-weight: 600;
+  text-align: left; padding: 10px 14px; border-bottom: 2px solid var(--border);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+  position: sticky; top: 0; z-index: 2;
+}
+.qty-table td { padding: 10px 14px; border-bottom: 1px solid var(--glass-border); }
+.qty-table tr:hover td { background: rgba(110,168,254,0.04); }
+.qty-table .num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 500; }
+
+/* Detail table */
+.detail-table-wrap { max-height: 500px; overflow-y: auto; border-radius: 10px; border: 1px solid var(--glass-border); }
+.detail-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.detail-table th {
+  background: var(--bg-secondary); color: var(--text-secondary); font-weight: 600;
+  text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--border);
+  font-size: 11px; text-transform: uppercase; position: sticky; top: 0; z-index: 2;
+}
+.detail-table td { padding: 7px 12px; border-bottom: 1px solid var(--glass-border); }
+.detail-table tr:hover td { background: rgba(110,168,254,0.04); }
+
+/* Days badge */
+.days-badge {
+  display: inline-block; padding: 2px 10px; border-radius: 10px;
+  font-size: 11px; font-weight: 700;
+}
+.days-badge.fresh { background: rgba(34,197,94,0.15); color: #34d399; }
+.days-badge.normal { background: rgba(250,204,21,0.15); color: #fcd34d; }
+.days-badge.aged { background: rgba(248,113,113,0.15); color: #fca5a5; }
+.days-badge.old { background: rgba(153,27,27,0.2); color: #fca5a5; }
+
+/* Pagination */
+.pagination { display: flex; align-items: center; gap: 10px; padding: 12px 0; justify-content: center; }
+.pagination button {
+  padding: 6px 16px; border: 1px solid var(--glass-border); border-radius: 6px;
+  background: rgba(14,21,41,0.7); color: var(--text-secondary); cursor: pointer;
+  font-size: 12px; transition: all 0.2s;
+}
+.pagination button:hover:not(:disabled) { background: rgba(110,168,254,0.12); color: var(--accent); border-color: rgba(110,168,254,0.3); }
+.pagination button:disabled { opacity: 0.3; cursor: not-allowed; }
+.pagination .page-info { font-size: 12px; color: var(--text-muted); }
+
+/* Tabs */
+.view-tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+.view-tab {
+  padding: 8px 20px; border: 1px solid var(--glass-border); border-radius: 8px;
+  background: transparent; color: var(--text-muted); cursor: pointer;
+  font-size: 13px; font-weight: 500; transition: all 0.2s;
+}
+.view-tab:hover { color: var(--text-secondary); background: rgba(110,168,254,0.06); }
+.view-tab.active {
+  background: linear-gradient(135deg, rgba(110,168,254,0.2), rgba(167,139,250,0.12));
+  color: var(--accent); border-color: rgba(110,168,254,0.35); font-weight: 600;
+}
+
+/* Loading */
+.loading { text-align: center; padding: 60px; color: var(--text-muted); font-size: 14px; }
+.loading::after { content: ''; display: inline-block; width: 20px; height: 20px; border: 2px solid var(--glass-border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin-left: 10px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .filter-bar { flex-direction: column; align-items: stretch; }
+  .summary-cards { grid-template-columns: repeat(2, 1fr); }
+  .aging-month-label { width: 60px; font-size: 11px; }
+  .aging-avg { width: 60px; font-size: 11px; }
+  .aging-count { width: 50px; font-size: 10px; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>출고 제품 연령 분석</h1>
+  <span class="badge b1">Outbound Aging Analysis</span>
+  <span class="badge b2">재고일수 = 실제완료일 − 제조일자</span>
+  <div style="margin-left:auto;display:flex;gap:8px;">
+    <a href="/">← DB Viewer</a>
+    <a href="/structure">📦 구조 조회</a>
+  </div>
+</div>
+
+<div class="main-content">
+  <!-- Filters -->
+  <div class="filter-bar">
+    <div class="filter-group">
+      <label>조회 시작월</label>
+      <input type="month" id="filterFrom">
+    </div>
+    <div class="filter-group">
+      <label>조회 종료월</label>
+      <input type="month" id="filterTo">
+    </div>
+    <div class="filter-group">
+      <label>플랜트</label>
+      <select id="filterPlant"><option value="">전체</option></select>
+    </div>
+    <div class="filter-group">
+      <label>창고 (영역)</label>
+      <select id="filterWarehouse"><option value="">전체</option></select>
+    </div>
+    <button class="btn-search" onclick="doSearch()">🔍 조회</button>
+  </div>
+
+  <!-- Summary cards -->
+  <div class="summary-cards" id="summaryCards">
+    <div class="summary-card accent"><div class="sc-label">총 출고 건수</div><div class="sc-value" id="scTotal">-</div><div class="sc-sub" id="scTotalSub">조회 후 표시</div></div>
+    <div class="summary-card green"><div class="sc-label">평균 재고일수</div><div class="sc-value" id="scAvgDays">-</div><div class="sc-sub" id="scAvgSub">전체 기간</div></div>
+    <div class="summary-card orange"><div class="sc-label">총 출고 수량</div><div class="sc-value" id="scQty">-</div><div class="sc-sub" id="scQtySub">단위별 합계</div></div>
+    <div class="summary-card pink"><div class="sc-label">장기재고 비율 (90일+)</div><div class="sc-value" id="scLong">-</div><div class="sc-sub" id="scLongSub">90일 초과 비율</div></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="view-tabs">
+    <button class="view-tab active" onclick="switchTab('aging')">📊 재고일수 분포</button>
+    <button class="view-tab" onclick="switchTab('qty')">📦 월별 출고 수량</button>
+    <button class="view-tab" onclick="switchTab('detail')">📋 상세 데이터</button>
+  </div>
+
+  <!-- Tab: Aging distribution -->
+  <div class="tab-content" id="tabAging">
+    <div class="chart-section">
+      <div class="section-title">월별 재고일수 분포 (재고일수 = 실제완료일 − 제조일자)</div>
+      <div id="agingChart" class="aging-chart"><div class="loading">데이터 로딩 중</div></div>
+      <div class="aging-legend" id="agingLegend"></div>
+    </div>
+  </div>
+
+  <!-- Tab: Monthly qty -->
+  <div class="tab-content" id="tabQty" style="display:none;">
+    <div class="chart-section">
+      <div class="section-title">월별 출고 수량 (단위별)</div>
+      <div id="qtyContent"><div class="loading">데이터 로딩 중</div></div>
+    </div>
+  </div>
+
+  <!-- Tab: Detail data -->
+  <div class="tab-content" id="tabDetail" style="display:none;">
+    <div class="chart-section">
+      <div class="section-title">출고 상세 데이터</div>
+      <div id="detailContent"><div class="loading">데이터 로딩 중</div></div>
+      <div class="pagination" id="detailPagination"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// State
+let summaryData = null;
+let detailPage = 0;
+const bucketLabels = {
+  '0-7': '0~7일', '8-14': '8~14일', '15-30': '15~30일', '31-60': '31~60일',
+  '61-90': '61~90일', '91-180': '91~180일', '181-365': '181~365일', '365+': '365일+'
+};
+const bucketClasses = {
+  '0-7': 'bucket-0-7', '8-14': 'bucket-8-14', '15-30': 'bucket-15-30',
+  '31-60': 'bucket-31-60', '61-90': 'bucket-61-90', '91-180': 'bucket-91-180',
+  '181-365': 'bucket-181-365', '365+': 'bucket-365p'
+};
+const bucketColors = {
+  '0-7': '#22c55e', '8-14': '#4ade80', '15-30': '#a3e635', '31-60': '#facc15',
+  '61-90': '#fb923c', '91-180': '#f87171', '181-365': '#dc2626', '365+': '#991b1b'
+};
+
+function formatMonth(ym) {
+  if (!ym || ym.length < 6) return ym;
+  return ym.substring(0,4) + '.' + ym.substring(4,6);
+}
+function fmt(n) {
+  if (n == null) return '-';
+  return Number(n).toLocaleString('ko-KR', {maximumFractionDigits: 1});
+}
+function fmtDate(d) {
+  if (!d || d.length < 8) return d;
+  return d.substring(0,4) + '-' + d.substring(4,6) + '-' + d.substring(6,8);
+}
+
+// Init: set default month values
+function initFilters() {
+  const now = new Date();
+  const ym = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  // Data range is 202506~202508
+  document.getElementById('filterFrom').value = '2025-06';
+  document.getElementById('filterTo').value = '2025-08';
+  // Load initial data
+  doSearch();
+}
+
+// Fetch summary data
+async function doSearch() {
+  const fromVal = document.getElementById('filterFrom').value; // YYYY-MM
+  const toVal = document.getElementById('filterTo').value;
+  const plant = document.getElementById('filterPlant').value;
+  const wh = document.getElementById('filterWarehouse').value;
+
+  const fromYM = fromVal ? fromVal.replace('-','') : '';
+  const toYM = toVal ? toVal.replace('-','') : '';
+
+  const params = new URLSearchParams();
+  if (fromYM) params.set('from', fromYM);
+  if (toYM) params.set('to', toYM);
+  if (plant) params.set('plant', plant);
+  if (wh) params.set('warehouse', wh);
+
+  // Show loading
+  document.getElementById('agingChart').innerHTML = '<div class="loading">데이터 로딩 중</div>';
+  document.getElementById('qtyContent').innerHTML = '<div class="loading">데이터 로딩 중</div>';
+
+  try {
+    const res = await fetch('/api/aging/summary?' + params.toString());
+    summaryData = await res.json();
+    renderFilters(summaryData);
+    renderSummaryCards(summaryData);
+    renderAgingChart(summaryData);
+    renderQtyTable(summaryData);
+    // Reset detail page
+    detailPage = 0;
+    loadDetail();
+  } catch(e) {
+    console.error(e);
+    document.getElementById('agingChart').innerHTML = '<div class="loading">오류 발생: ' + e.message + '</div>';
+  }
+}
+
+function renderFilters(data) {
+  const plantSel = document.getElementById('filterPlant');
+  const whSel = document.getElementById('filterWarehouse');
+  const curPlant = plantSel.value;
+  const curWh = whSel.value;
+
+  // Plants
+  let html = '<option value="">전체</option>';
+  (data.plants || []).forEach(p => {
+    html += '<option value="' + p.code + '"' + (p.code === curPlant ? ' selected' : '') + '>' + p.code + ' (' + p.name + ')</option>';
+  });
+  plantSel.innerHTML = html;
+
+  // Warehouses
+  html = '<option value="">전체</option>';
+  (data.warehouses || []).forEach(w => {
+    html += '<option value="' + w + '"' + (w === curWh ? ' selected' : '') + '>' + w + '</option>';
+  });
+  whSel.innerHTML = html;
+}
+
+function renderSummaryCards(data) {
+  const aging = data.monthly_aging || {};
+  const qty = data.monthly_qty || {};
+
+  // Total records & avg days
+  let totalCnt = 0, totalDays = 0, totalDayCnt = 0;
+  let longCnt = 0; // 90+ days
+  Object.values(aging).forEach(m => {
+    totalCnt += m.total_cnt || 0;
+    totalDays += (m.avg_days || 0) * (m.total_cnt || 0);
+    totalDayCnt += m.total_cnt || 0;
+    ['91-180','181-365','365+'].forEach(b => { longCnt += (m[b] && m[b].cnt) || 0; });
+  });
+  const avgDays = totalDayCnt > 0 ? (totalDays / totalDayCnt).toFixed(1) : 0;
+
+  document.getElementById('scTotal').textContent = fmt(totalCnt);
+  document.getElementById('scTotalSub').textContent = Object.keys(aging).length + '개월 데이터';
+
+  document.getElementById('scAvgDays').textContent = avgDays + '일';
+  document.getElementById('scAvgSub').textContent = '전체 출고 건 기준';
+
+  // Total qty by UOM
+  let totalQtyMap = {};
+  Object.values(qty).forEach(mq => {
+    Object.entries(mq).forEach(([uom, v]) => {
+      if (!totalQtyMap[uom]) totalQtyMap[uom] = 0;
+      totalQtyMap[uom] += v.qty || 0;
+    });
+  });
+  const qtyParts = Object.entries(totalQtyMap).map(([u, q]) => fmt(q) + ' ' + u);
+  document.getElementById('scQty').textContent = qtyParts.length > 0 ? qtyParts[0] : '-';
+  document.getElementById('scQtySub').textContent = qtyParts.length > 1 ? qtyParts.slice(1).join(', ') : '총 출고수량';
+
+  // Long-term ratio
+  const longRatio = totalCnt > 0 ? (longCnt / totalCnt * 100).toFixed(1) : 0;
+  document.getElementById('scLong').textContent = longRatio + '%';
+  document.getElementById('scLongSub').textContent = fmt(longCnt) + '건 / ' + fmt(totalCnt) + '건';
+}
+
+function renderAgingChart(data) {
+  const aging = data.monthly_aging || {};
+  const buckets = data.bucket_keys || Object.keys(bucketLabels);
+  const container = document.getElementById('agingChart');
+  const legend = document.getElementById('agingLegend');
+
+  const months = Object.keys(aging).sort();
+  if (months.length === 0) {
+    container.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:40px;">조회 결과가 없습니다.</div>';
+    return;
+  }
+
+  let html = '';
+  months.forEach(m => {
+    const mData = aging[m];
+    const totalCnt = mData.total_cnt || 0;
+    const avgDays = mData.avg_days || 0;
+
+    html += '<div class="aging-month-row">';
+    html += '<div class="aging-month-label">' + formatMonth(m) + '</div>';
+    html += '<div class="aging-bar-container">';
+
+    buckets.forEach(b => {
+      const bData = mData[b] || {cnt: 0, qty: 0};
+      const pct = totalCnt > 0 ? (bData.cnt / totalCnt * 100) : 0;
+      if (pct > 0) {
+        const cls = bucketClasses[b] || '';
+        const label = pct >= 8 ? bData.cnt + '건 (' + pct.toFixed(0) + '%)' : (pct >= 4 ? pct.toFixed(0) + '%' : '');
+        html += '<div class="aging-bar-seg ' + cls + '" style="width:' + pct.toFixed(2) + '%" title="' + bucketLabels[b] + ': ' + bData.cnt + '건 (' + pct.toFixed(1) + '%), 수량: ' + fmt(bData.qty) + '">';
+        html += '<span>' + label + '</span>';
+        html += '</div>';
+      }
+    });
+
+    html += '</div>';
+    html += '<div class="aging-avg">평균 ' + avgDays + '일</div>';
+    html += '<div class="aging-count">' + fmt(totalCnt) + '건</div>';
+    html += '</div>';
+  });
+
+  container.innerHTML = html;
+
+  // Legend
+  let legHtml = '';
+  buckets.forEach(b => {
+    legHtml += '<div class="aging-legend-item"><div class="aging-legend-dot" style="background:' + bucketColors[b] + '"></div>' + bucketLabels[b] + '</div>';
+  });
+  legend.innerHTML = legHtml;
+}
+
+function renderQtyTable(data) {
+  const qty = data.monthly_qty || {};
+  const container = document.getElementById('qtyContent');
+  const months = Object.keys(qty).sort();
+
+  if (months.length === 0) {
+    container.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:40px;">조회 결과가 없습니다.</div>';
+    return;
+  }
+
+  // Collect all UOMs
+  const uomSet = new Set();
+  months.forEach(m => Object.keys(qty[m]).forEach(u => uomSet.add(u)));
+  const uoms = Array.from(uomSet).sort();
+
+  let html = '<table class="qty-table"><thead><tr><th>월</th>';
+  uoms.forEach(u => {
+    html += '<th class="num">수량 (' + u + ')</th><th class="num">건수 (' + u + ')</th>';
+  });
+  html += '<th class="num">총 건수</th></tr></thead><tbody>';
+
+  let grandTotal = {};
+  uoms.forEach(u => { grandTotal[u] = {qty: 0, cnt: 0}; });
+  let grandCnt = 0;
+
+  months.forEach(m => {
+    html += '<tr><td style="font-weight:600;">' + formatMonth(m) + '</td>';
+    let mTotal = 0;
+    uoms.forEach(u => {
+      const d = qty[m][u] || {qty: 0, cnt: 0};
+      html += '<td class="num">' + fmt(d.qty) + '</td>';
+      html += '<td class="num">' + fmt(d.cnt) + '</td>';
+      grandTotal[u].qty += d.qty;
+      grandTotal[u].cnt += d.cnt;
+      mTotal += d.cnt;
+    });
+    grandCnt += mTotal;
+    html += '<td class="num" style="font-weight:700;">' + fmt(mTotal) + '</td>';
+    html += '</tr>';
+  });
+
+  // Grand total row
+  html += '<tr style="background:rgba(110,168,254,0.08);font-weight:700;"><td>합계</td>';
+  uoms.forEach(u => {
+    html += '<td class="num">' + fmt(grandTotal[u].qty) + '</td>';
+    html += '<td class="num">' + fmt(grandTotal[u].cnt) + '</td>';
+  });
+  html += '<td class="num">' + fmt(grandCnt) + '</td>';
+  html += '</tr></tbody></table>';
+
+  container.innerHTML = html;
+}
+
+// Detail
+async function loadDetail() {
+  const fromVal = document.getElementById('filterFrom').value;
+  const toVal = document.getElementById('filterTo').value;
+  const plant = document.getElementById('filterPlant').value;
+  const wh = document.getElementById('filterWarehouse').value;
+
+  const params = new URLSearchParams();
+  if (fromVal) params.set('from', fromVal.replace('-',''));
+  if (toVal) params.set('to', toVal.replace('-',''));
+  if (plant) params.set('plant', plant);
+  if (wh) params.set('warehouse', wh);
+  params.set('page', detailPage);
+  params.set('page_size', 50);
+
+  const container = document.getElementById('detailContent');
+  container.innerHTML = '<div class="loading">데이터 로딩 중</div>';
+
+  try {
+    const res = await fetch('/api/aging/detail?' + params.toString());
+    const data = await res.json();
+    renderDetail(data);
+  } catch(e) {
+    container.innerHTML = '<div style="color:var(--red);padding:20px;">오류: ' + e.message + '</div>';
+  }
+}
+
+function daysBadgeClass(days) {
+  if (days == null) return '';
+  if (days <= 14) return 'fresh';
+  if (days <= 60) return 'normal';
+  if (days <= 180) return 'aged';
+  return 'old';
+}
+
+function renderDetail(data) {
+  const container = document.getElementById('detailContent');
+  const rows = data.rows || [];
+  const total = data.total || 0;
+
+  if (rows.length === 0) {
+    container.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:40px;">조회 결과가 없습니다.</div>';
+    document.getElementById('detailPagination').innerHTML = '';
+    return;
+  }
+
+  let html = '<div class="detail-table-wrap"><table class="detail-table">';
+  html += '<thead><tr>';
+  html += '<th>실제완료일</th><th>제조일자</th><th>재고일수</th><th>플랜트</th><th>창고</th>';
+  html += '<th>SKU</th><th>품명</th><th>수량</th><th>단위</th>';
+  html += '</tr></thead><tbody>';
+
+  rows.forEach(r => {
+    const bc = daysBadgeClass(r.days);
+    html += '<tr>';
+    html += '<td>' + fmtDate(r.act_date) + '</td>';
+    html += '<td>' + fmtDate(r.mfg_date) + '</td>';
+    html += '<td><span class="days-badge ' + bc + '">' + (r.days != null ? r.days + '일' : '-') + '</span></td>';
+    html += '<td>' + (r.plant || '') + ' <span style="color:var(--text-muted);font-size:11px;">' + (r.plant_name || '') + '</span></td>';
+    html += '<td>' + (r.warehouse || '') + '</td>';
+    html += '<td style="font-size:11px;">' + (r.sku || '') + '</td>';
+    html += '<td>' + (r.desc || '') + '</td>';
+    html += '<td class="num">' + fmt(r.qty) + '</td>';
+    html += '<td>' + (r.uom || '') + '</td>';
+    html += '</tr>';
+  });
+
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+
+  // Pagination
+  const pageSize = data.page_size || 50;
+  const totalPages = Math.ceil(total / pageSize);
+  const curPage = data.page || 0;
+  let pgHtml = '';
+  pgHtml += '<button ' + (curPage <= 0 ? 'disabled' : '') + ' onclick="detailPage=0;loadDetail();">◀◀</button>';
+  pgHtml += '<button ' + (curPage <= 0 ? 'disabled' : '') + ' onclick="detailPage--;loadDetail();">◀</button>';
+  pgHtml += '<span class="page-info">' + (curPage+1) + ' / ' + totalPages + ' (' + fmt(total) + '건)</span>';
+  pgHtml += '<button ' + (curPage >= totalPages-1 ? 'disabled' : '') + ' onclick="detailPage++;loadDetail();">▶</button>';
+  pgHtml += '<button ' + (curPage >= totalPages-1 ? 'disabled' : '') + ' onclick="detailPage=' + (totalPages-1) + ';loadDetail();">▶▶</button>';
+  document.getElementById('detailPagination').innerHTML = pgHtml;
+}
+
+// Tab switching
+function switchTab(tab) {
+  document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+  document.querySelectorAll('.view-tab').forEach(el => el.classList.remove('active'));
+
+  if (tab === 'aging') {
+    document.getElementById('tabAging').style.display = 'block';
+    document.querySelectorAll('.view-tab')[0].classList.add('active');
+  } else if (tab === 'qty') {
+    document.getElementById('tabQty').style.display = 'block';
+    document.querySelectorAll('.view-tab')[1].classList.add('active');
+  } else if (tab === 'detail') {
+    document.getElementById('tabDetail').style.display = 'block';
+    document.querySelectorAll('.view-tab')[2].classList.add('active');
+    if (!document.getElementById('detailContent').querySelector('table')) {
+      loadDetail();
+    }
+  }
+}
+
+// Plant filter change => refresh warehouses
+document.getElementById('filterPlant').addEventListener('change', function() {
+  // Re-fetch to update warehouse list
+  doSearch();
+});
+
+// Init
+initFilters();
 </script>
 </body>
 </html>
