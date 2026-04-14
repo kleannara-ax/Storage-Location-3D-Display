@@ -10,6 +10,15 @@ from flask import Flask, request, jsonify, render_template_string
 app = Flask(__name__)
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'inventory.db')
 
+# 플랜트 코드 → 이름 매핑
+PLANT_NAMES = {
+    'P100': '제지',
+    'P200': '화장지',
+    'P300': '패드',
+    'P400': '물류',
+    'P500': '음성',
+}
+
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -25,76 +34,77 @@ HTML_TEMPLATE = r"""
 <title>Storage-Location-3D-Display | DB Viewer</title>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
-body { font-family: 'Segoe UI', -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; }
-.header { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 16px 24px; border-bottom: 1px solid #334155; display: flex; align-items: center; gap: 16px; }
-.header h1 { font-size: 18px; color: #38bdf8; font-weight: 600; }
-.header .badge { background: #164e63; color: #67e8f9; font-size: 11px; padding: 3px 8px; border-radius: 4px; }
-.container { display: flex; height: calc(100vh - 56px); }
+body { font-family: 'Segoe UI', -apple-system, sans-serif; background: #080d1a; color: #edf0f7; }
+.header { background: linear-gradient(135deg, #0a1128 0%, #121d3a 50%, #162550 100%); padding: 16px 24px; border-bottom: 1px solid rgba(110,168,254,0.1); display: flex; align-items: center; gap: 16px; box-shadow: 0 4px 30px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03); }
+.header h1 { font-size: 18px; background: linear-gradient(135deg, #6ea8fe, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700; letter-spacing: 0.5px; }
+.header .badge { background: rgba(110,168,254,0.12); color: #6ea8fe; font-size: 11px; padding: 4px 12px; border-radius: 6px; border: 1px solid rgba(110,168,254,0.2); backdrop-filter: blur(8px); }
+.container { display: flex; height: calc(100vh - 56px); background: linear-gradient(180deg, #080d1a, #060a14); }
 
 /* Sidebar */
-.sidebar { width: 280px; background: #1e293b; border-right: 1px solid #334155; overflow-y: auto; flex-shrink: 0; }
-.sidebar h3 { padding: 16px 16px 8px; font-size: 11px; text-transform: uppercase; color: #64748b; letter-spacing: 1px; }
-.table-item { padding: 10px 16px; cursor: pointer; border-left: 3px solid transparent; transition: all 0.15s; display: flex; justify-content: space-between; align-items: center; }
-.table-item:hover { background: #334155; }
-.table-item.active { background: #1e3a5f; border-left-color: #38bdf8; }
+.sidebar { width: 280px; background: linear-gradient(180deg, #0e1529, #0b1020); border-right: 1px solid rgba(110,168,254,0.1); overflow-y: auto; flex-shrink: 0; }
+.sidebar h3 { padding: 16px 16px 8px; font-size: 11px; text-transform: uppercase; color: #5a6d8e; letter-spacing: 1.5px; font-weight: 700; }
+.table-item { padding: 10px 16px; cursor: pointer; border-left: 3px solid transparent; transition: all 0.2s; display: flex; justify-content: space-between; align-items: center; }
+.table-item:hover { background: rgba(110,168,254,0.06); }
+.table-item.active { background: linear-gradient(90deg, rgba(110,168,254,0.15), rgba(110,168,254,0.05)); border-left-color: #6ea8fe; }
 .table-item .name { font-size: 14px; font-weight: 500; }
-.table-item .info { font-size: 11px; color: #64748b; }
-.table-item .count { font-size: 11px; background: #334155; padding: 2px 8px; border-radius: 10px; color: #94a3b8; }
+.table-item .info { font-size: 11px; color: #5a6d8e; }
+.table-item .count { font-size: 11px; background: rgba(110,168,254,0.06); padding: 3px 10px; border-radius: 10px; color: #a0b0d0; border: 1px solid rgba(110,168,254,0.1); }
 
 /* Main */
 .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.toolbar { padding: 12px 20px; background: #1e293b; border-bottom: 1px solid #334155; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.sql-input { flex: 1; min-width: 300px; background: #0f172a; border: 1px solid #334155; color: #e2e8f0; padding: 8px 14px; border-radius: 6px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; outline: none; }
-.sql-input:focus { border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56,189,248,0.15); }
-.btn { padding: 8px 18px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: all 0.15s; }
-.btn-primary { background: #0ea5e9; color: white; }
-.btn-primary:hover { background: #0284c7; }
-.btn-secondary { background: #334155; color: #e2e8f0; }
-.btn-secondary:hover { background: #475569; }
+.toolbar { padding: 12px 20px; background: linear-gradient(135deg, rgba(14,21,41,0.95), rgba(10,17,40,0.9)); border-bottom: 1px solid rgba(110,168,254,0.1); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; backdrop-filter: blur(8px); }
+.sql-input { flex: 1; min-width: 300px; background: rgba(8,13,26,0.6); border: 1px solid rgba(110,168,254,0.12); color: #edf0f7; padding: 9px 14px; border-radius: 8px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; outline: none; transition: border-color 0.2s, box-shadow 0.2s; }
+.sql-input:focus { border-color: #6ea8fe; box-shadow: 0 0 0 3px rgba(110,168,254,0.12); }
+.btn { padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: all 0.2s; }
+.btn-primary { background: linear-gradient(135deg, #6ea8fe, #4a8af0); color: white; box-shadow: 0 2px 12px rgba(110,168,254,0.25); }
+.btn-primary:hover { background: linear-gradient(135deg, #5b9cf7, #3d7de3); box-shadow: 0 4px 16px rgba(110,168,254,0.35); }
+.btn-secondary { background: rgba(110,168,254,0.06); color: #a0b0d0; border: 1px solid rgba(110,168,254,0.1); }
+.btn-secondary:hover { background: rgba(110,168,254,0.15); color: #edf0f7; border-color: rgba(110,168,254,0.25); }
 
 /* Results */
 .results { flex: 1; overflow: auto; padding: 0; }
-.result-info { padding: 8px 20px; background: #1e293b; font-size: 12px; color: #64748b; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; }
+.result-info { padding: 8px 20px; background: rgba(14,21,41,0.8); font-size: 12px; color: #5a6d8e; border-bottom: 1px solid rgba(110,168,254,0.1); display: flex; justify-content: space-between; backdrop-filter: blur(8px); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { position: sticky; top: 0; background: #1e293b; color: #94a3b8; font-weight: 600; text-align: left; padding: 10px 12px; border-bottom: 2px solid #334155; white-space: nowrap; font-size: 12px; text-transform: uppercase; z-index:1; }
-td { padding: 8px 12px; border-bottom: 1px solid #1e293b; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-tr:hover td { background: #1e293b; }
-tr:nth-child(even) td { background: rgba(30,41,59,0.3); }
-tr:nth-child(even):hover td { background: #1e293b; }
-td.null { color: #64748b; font-style: italic; }
+th { position: sticky; top: 0; background: #141d35; color: #a0b0d0; font-weight: 600; text-align: left; padding: 10px 12px; border-bottom: 2px solid rgba(110,168,254,0.12); white-space: nowrap; font-size: 12px; text-transform: uppercase; z-index:1; }
+td { padding: 8px 12px; border-bottom: 1px solid rgba(110,168,254,0.05); max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+tr:hover td { background: rgba(110,168,254,0.06); }
+tr:nth-child(even) td { background: rgba(14,21,41,0.4); }
+tr:nth-child(even):hover td { background: rgba(110,168,254,0.06); }
+td.null { color: #5a6d8e; font-style: italic; }
 
 /* Schema view */
 .schema-table { margin: 20px; }
-.schema-table h3 { color: #38bdf8; margin-bottom: 12px; font-size: 16px; }
-.col-row { display: grid; grid-template-columns: 30px 180px 120px 80px 1fr; gap: 8px; padding: 6px 12px; font-size: 13px; border-bottom: 1px solid #1e293b; }
-.col-row.header-row { color: #64748b; font-weight: 600; text-transform: uppercase; font-size: 11px; border-bottom: 2px solid #334155; }
-.col-pk { color: #fbbf24; font-weight: bold; }
-.col-type { color: #a78bfa; }
+.schema-table h3 { background: linear-gradient(90deg, #6ea8fe, #b197fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 12px; font-size: 16px; font-weight: 700; }
+.col-row { display: grid; grid-template-columns: 30px 180px 120px 80px 1fr; gap: 8px; padding: 6px 12px; font-size: 13px; border-bottom: 1px solid rgba(110,168,254,0.05); }
+.col-row.header-row { color: #5a6d8e; font-weight: 600; text-transform: uppercase; font-size: 11px; border-bottom: 2px solid rgba(110,168,254,0.12); }
+.col-pk { color: #fcd34d; font-weight: bold; }
+.col-type { color: #b197fc; }
 
 /* Pagination */
-.pagination { padding: 10px 20px; background: #1e293b; border-top: 1px solid #334155; display: flex; gap: 8px; align-items: center; justify-content: center; }
-.pagination button { background: #334155; color: #e2e8f0; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-.pagination button:hover { background: #475569; }
-.pagination button.active { background: #0ea5e9; }
-.pagination button:disabled { opacity: 0.4; cursor: default; }
+.pagination { padding: 10px 20px; background: rgba(14,21,41,0.8); border-top: 1px solid rgba(110,168,254,0.1); display: flex; gap: 8px; align-items: center; justify-content: center; backdrop-filter: blur(8px); }
+.pagination button { background: rgba(110,168,254,0.06); color: #a0b0d0; border: 1px solid rgba(110,168,254,0.1); padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 12px; transition: all 0.2s; }
+.pagination button:hover { background: rgba(110,168,254,0.15); border-color: rgba(110,168,254,0.25); }
+.pagination button.active { background: linear-gradient(135deg, #6ea8fe, #4a8af0); color: white; border-color: #6ea8fe; box-shadow: 0 2px 10px rgba(110,168,254,0.25); }
+.pagination button:disabled { opacity: 0.3; cursor: default; }
 
 /* Quick stats */
 .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; padding: 20px; }
-.stat-card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px 20px; }
-.stat-card h4 { color: #64748b; font-size: 12px; text-transform: uppercase; margin-bottom: 4px; }
-.stat-card .value { font-size: 28px; font-weight: 700; color: #38bdf8; }
-.stat-card .sub { font-size: 12px; color: #64748b; margin-top: 4px; }
+.stat-card { background: rgba(110,168,254,0.04); border: 1px solid rgba(110,168,254,0.1); border-radius: 12px; padding: 18px 22px; transition: all 0.2s; }
+.stat-card:hover { background: rgba(110,168,254,0.08); border-color: rgba(110,168,254,0.2); box-shadow: 0 4px 20px rgba(110,168,254,0.08); }
+.stat-card h4 { color: #5a6d8e; font-size: 12px; text-transform: uppercase; margin-bottom: 4px; letter-spacing: 0.5px; }
+.stat-card .value { font-size: 28px; font-weight: 700; background: linear-gradient(135deg, #6ea8fe, #93c5fd); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.stat-card .sub { font-size: 12px; color: #5a6d8e; margin-top: 4px; }
 
-.error-msg { background: #7f1d1d; color: #fca5a5; padding: 12px 20px; margin: 10px 20px; border-radius: 6px; font-size: 13px; }
-.loading { text-align: center; padding: 40px; color: #64748b; }
+.error-msg { background: rgba(252,165,165,0.08); color: #fca5a5; border: 1px solid rgba(252,165,165,0.15); padding: 12px 20px; margin: 10px 20px; border-radius: 10px; font-size: 13px; }
+.loading { text-align: center; padding: 40px; color: #5a6d8e; }
 </style>
 </head>
 <body>
 <div class="header">
   <h1>Storage-Location-3D-Display</h1>
   <span class="badge">DB Viewer</span>
-  <span class="badge" style="background:#1e3a5f;color:#38bdf8;">SQLite (Mirrored from Oracle)</span>
-  <a href="/structure" style="margin-left:auto;color:#38bdf8;text-decoration:none;font-size:13px;padding:6px 14px;background:#164e63;border-radius:6px;">📦 구조 조회 →</a>
+  <span class="badge" style="background:rgba(160,176,208,0.08);color:#a0b0d0;border:1px solid rgba(160,176,208,0.1);">SQLite (Mirrored from Oracle)</span>
+  <a href="/structure" style="margin-left:auto;color:#a0b0d0;text-decoration:none;font-size:13px;padding:6px 16px;background:rgba(110,168,254,0.08);border:1px solid rgba(110,168,254,0.12);border-radius:8px;transition:all 0.2s;">📦 구조 조회 →</a>
 </div>
 <div class="container">
   <div class="sidebar">
@@ -164,7 +174,7 @@ async function showSchema(tableName) {
   html += `<div class="col-row header-row"><span>#</span><span>Column</span><span>Type</span><span>Nullable</span><span>Comment</span></div>`;
   data.columns.forEach((col, i) => {
     const pkMark = col.pk ? '<span class="col-pk">PK</span>' : '';
-    html += `<div class="col-row"><span>${i+1}</span><span>${col.name} ${pkMark}</span><span class="col-type">${col.type}</span><span>${col.notnull ? 'NOT NULL' : 'NULL OK'}</span><span style="color:#64748b">${col.comment||''}</span></div>`;
+    html += `<div class="col-row"><span>${i+1}</span><span>${col.name} ${pkMark}</span><span class="col-type">${col.type}</span><span>${col.notnull ? 'NOT NULL' : 'NULL OK'}</span><span style="color:#94a3b8">${col.comment||''}</span></div>`;
   });
   html += `</div>`;
   html += `<div style="padding:12px 20px;"><button class="btn btn-primary" onclick="runQuickQuery('SELECT * FROM ${tableName} LIMIT 100')">View Data (Top 100)</button></div>`;
@@ -218,7 +228,7 @@ function renderResults(data) {
   html += '</tr></thead><tbody>';
   data.rows.forEach((row, idx) => {
     html += '<tr>';
-    html += `<td style="color:#64748b">${data.page * pageSize + idx + 1}</td>`;
+    html += `<td style="color:#94a3b8">${data.page * pageSize + idx + 1}</td>`;
     row.forEach(val => {
       if (val === null) {
         html += '<td class="null">NULL</td>';
@@ -238,7 +248,7 @@ function renderResults(data) {
     html += '<div class="pagination">';
     html += `<button ${data.page===0?'disabled':''} onclick="goPage(0)">&laquo;</button>`;
     html += `<button ${data.page===0?'disabled':''} onclick="goPage(${data.page-1})">&lsaquo; Prev</button>`;
-    html += `<span style="color:#64748b;font-size:12px;">${data.page+1} / ${totalPages}</span>`;
+    html += `<span style="color:#94a3b8;font-size:12px;">${data.page+1} / ${totalPages}</span>`;
     html += `<button ${data.page>=totalPages-1?'disabled':''} onclick="goPage(${data.page+1})">Next &rsaquo;</button>`;
     html += `<button ${data.page>=totalPages-1?'disabled':''} onclick="goPage(${totalPages-1})">&raquo;</button>`;
     html += '</div>';
@@ -308,7 +318,41 @@ COMMENTS = {
               'STDLNR':'작업장','SSORNU':'반품출하문서번호','SSORIT':'반품출하문서아이템','SMBLNR':'Mat.Doc.','SZEILE':'Mat.Doc.',
               'SMJAHR':'M/D년도','SXBLNR':'인터페이스번호','SAPSTS':'ERP Mvt','SBKTXT':'Text',
               'CREDAT':'생성일','CRETIM':'생성시간','CREUSR':'생성자','LMODAT':'수정일','LMOTIM':'수정시간',
-              'LMOUSR':'수정자','INDBZL':'비지니스로직','INDARC':'아카이브구분자','UPDCHK':'수정체크','KEEPTS':'SMS'}
+              'LMOUSR':'수정자','INDBZL':'비지니스로직','INDARC':'아카이브구분자','UPDCHK':'수정체크','KEEPTS':'SMS'},
+    'TASDI': {'TASKKY':'작업지시번호','TASKIT':'작업지시순번','TASKTY':'작업 타입','RSNCOD':'사유코드','STATIT':'아이템상태',
+              'QTTAOR':'작업수량','QTCOMP':'완료수량','OWNRKY':'화주','SKUKEY':'품목코드','LOTNUM':'물류롯트넘버',
+              'ACTCDT':'실제완료날짜','ACTCTI':'실제완료시간','QTYUOM':'Quantity','TKFLKY':'작업흐름 키','STEPNO':'단계 번호',
+              'LSTTFL':'최종 스텝','LOCASR':'FROM 지번','SECTSR':'섹션ID','PAIDSR':'BOM 코드','TRNUSR':'P/T ID',
+              'STRUTY':'팔렛타입','SMEAKY':'단위구성','SUOMKY':'단위','QTSPUM':'UPM','SDUOKY':'기본단위',
+              'QTSDUM':'기본UPM','LOCATG':'TO 지번','SECTTG':'To 섹션ID','PAIDTG':'BOM 코드','TRNUTG':'To P/T ID',
+              'TTRUTY':'To 팔렛타입','TMEAKY':'To 단위구성','TUOMKY':'To 단위','QTTPUM':'To UPM','TDUOKY':'To 기본단위',
+              'QTTDUM':'To 기본UPM','LOCAAC':'실지번','SECTAC':'실섹션ID','PAIDAC':'BOM 코드','TRNUAC':'실P/T ID',
+              'ATRUTY':'실팔렛타입','AMEAKY':'실단위구성','AUOMKY':'실단위','QTAPUM':'실UPM','ADUOKY':'실기본단위',
+              'QTADUM':'실기본UPM','REFDKY':'참조문서','REFDIT':'참조문서It.','REFCAT':'참조문서유형','REFDAT':'참조일자',
+              'PURCKY':'구매오더','PURCIT':'구매 It.','ASNDKY':'ASN 문서번호','ASNDIT':'ASN Item','RECVKY':'입고문서번호',
+              'RECVIT':'입고문서아이템','SHPOKY':'출하문서번호','SHPOIT':'출하문서순번','GRPOKY':'그룹오더','GRPOIT':'그룹오더아이템',
+              'SADJKY':'조정문서번호','SADJIT':'조정아이템번호','SDIFKY':'Diff.No.','SDIFIT':'Diff.It.','PHYIKY':'실사번호',
+              'PHYIIT':'재고실사순번','DROPID':'Drop ID','DESC01':'품목명','DESC02':'규격','ASKU01':'ERP 품번코드',
+              'ASKU02':'브랜드','ASKU03':'제조상','ASKU04':'유통기한일','ASKU05':'Image등록유무','EANCOD':'바코드',
+              'GTINCD':'바코드','SKUG01':'품목유형','SKUG02':'즉시불출여부','SKUG03':'품목유형3','SKUG04':'상품구분',
+              'SKUG05':'상품군','GRSWGT':'총중량','NETWGT':'KIT순중량','WGTUNT':'중량단위','LENGTH':'길이',
+              'WIDTHW':'가로','HEIGHT':'높이','CUBICM':'CBM','CAPACT':'CAPA','WORKID':'작업자ID',
+              'WORKNM':'작업자명','HHTTID':'PDA_ID','AREAKY':'영역','LOTA01':'저장위치','LOTA02':'플랜트',
+              'LOTA03':'포장타입','LOTA04':'호기','LOTA05':'LOTA05','LOTA06':'재고상태','LOTA07':'MTO판매번호',
+              'LOTA08':'국가코드','LOTA09':'MTO판매처코드','LOTA10':'보류사유명','LOTA11':'제조일자','LOTA12':'입고일자',
+              'LOTA13':'유효기간','LOTA14':'개별바코드','LOTA15':'LOT 번호','LOTA16':'평량','LOTA17':'컨테이너유형',
+              'LOTA18':'LOTA18','LOTA19':'LOTA19','LOTA20':'LOTA20','AWMSNO':'SEQ(MP)','AWMSTS':'자동창고 I/F',
+              'SMANDT':'Client','SEBELN':'오더번호','SEBELP':'오더순번','SZMBLNO':'B/L NO','SZMIPNO':'B/L Item NO',
+              'STRAID':'SCM주문번호','SVBELN':'출고오더번호','SPOSNR':'출고오더순번','STKNUM':'선적번호','STPNUM':'예약 It',
+              'SWERKS':'출발지','SLGORT':'영업 부문','SDATBG':'출하계획일시','STDLNR':'작업장','SSORNU':'반품출하문서번호',
+              'SSORIT':'반품출하 문서아이템','SMBLNR':'Mat.Doc.','SZEILE':'Mat.Doc.','SMJAHR':'M/D 년도','SXBLNR':'인터페이스번호',
+              'SAPSTS':'ERP Mvt','DOORKY':'출하대','PTLT01':'To 공급처','PTLT02':'To 부서코드','PTLT03':'To 개별바코드',
+              'PTLT04':'To Mall PO No.','PTLT05':'To Mall PO Item No.','PTLT06':'To 재고상태','PTLT07':'To Shipment Order No.',
+              'PTLT08':'To 교환반납 문서','PTLT09':'To WMS PO No.','PTLT10':'To 통화','PTLT11':'To 제조일자','PTLT12':'To 입고일자',
+              'PTLT13':'To 유효기간','PTLT14':'To 개별바코드','PTLT15':'To Lot번호','PTLT16':'To 매입단가','PTLT17':'To 매출단가',
+              'PTLT18':'To 미사용','PTLT19':'To 미사용','PTLT20':'To 미사용','PASTKY':'적치전략키','ALSTKY':'할당전략키',
+              'SBKTXT':'Text','TASRSN':'상세사유','CREDAT':'생성일','CRETIM':'생성시간','CREUSR':'생성자',
+              'LMODAT':'수정일','LMOTIM':'수정시간','LMOUSR':'수정자','INDBZL':'비지니스로직 구','INDARC':'아카이브 구분자','UPDCHK':'수정 체크'}
 }
 
 @app.route('/')
@@ -319,7 +363,7 @@ def index():
 def api_tables():
     conn = get_db()
     tables = []
-    for name in ['ZONMA', 'LOCMA', 'STKKA']:
+    for name in ['ZONMA', 'LOCMA', 'STKKA', 'TASDI']:
         count = conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
         cols = conn.execute(f"PRAGMA table_info({name})").fetchall()
         tables.append({'name': name, 'count': count, 'columns': len(cols)})
@@ -401,7 +445,7 @@ def api_dashboard():
     stats = []
     
     # Table counts
-    for name in ['ZONMA', 'LOCMA', 'STKKA']:
+    for name in ['ZONMA', 'LOCMA', 'STKKA', 'TASDI']:
         cnt = conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
         cols = conn.execute(f"PRAGMA table_info({name})").fetchall()
         label_map = {'ZONMA': 'ZONMA (Zone Master)', 'LOCMA': 'LOCMA (Location Master)', 'STKKA': 'STKKA (Stock)'}
@@ -440,16 +484,35 @@ def api_hierarchy_tree():
     conn = get_db()
     cur = conn.cursor()
 
+    # Load master names (use str() for consistent key matching across integer/text types)
+    ware_names = {}
+    try:
+        for r in cur.execute("SELECT WAREKY, NAME01 FROM WAHMA").fetchall():
+            ware_names[str(r['WAREKY']).strip()] = (r['NAME01'] or '').strip()
+    except: pass
+
+    stl_names = {}
+    try:
+        for r in cur.execute("SELECT WAREKY, PLNTKY, STLKY, STLNM FROM STLMA").fetchall():
+            stl_names[(str(r['WAREKY']).strip(), str(r['PLNTKY']).strip(), str(r['STLKY']).strip())] = (r['STLNM'] or '').strip()
+    except: pass
+
+    area_names = {}
+    try:
+        for r in cur.execute("SELECT WAREKY, AREAKY, SHORTX FROM AREMA").fetchall():
+            area_names[(str(r['WAREKY']).strip(), str(r['AREAKY']).strip())] = (r['SHORTX'] or '').strip()
+    except: pass
+
     # ZONMA: WAREKY > PLNTKY > STLKY > AREAKY > ZONEKY mapping
     cur.execute("SELECT DISTINCT WAREKY, PLNTKY, STLKY, AREAKY, ZONEKY, SHORTX FROM ZONMA")
     zone_map = {}
     zone_names = {}
     for row in cur.fetchall():
         wareky, plntky, stlky, areaky, zoneky, shortx = row['WAREKY'], row['PLNTKY'], row['STLKY'], row['AREAKY'], row['ZONEKY'], row['SHORTX']
-        plntky = (plntky or '').strip() or None
-        stlky = (stlky or '').strip() or None
+        plntky = (str(plntky) if plntky else '').strip() or None
+        stlky = (str(stlky) if stlky else '').strip() or None
         zone_map[(wareky, areaky, zoneky)] = (plntky, stlky)
-        zone_names[(wareky, zoneky)] = shortx
+        zone_names[(str(wareky).strip(), str(zoneky).strip())] = shortx
 
     # LOCMA: WAREKY + AREAKY + ZONEKY > LOCAKY
     cur.execute("SELECT DISTINCT WAREKY, AREAKY, ZONEKY, LOCAKY FROM LOCMA")
@@ -482,23 +545,36 @@ def api_hierarchy_tree():
 
     # Convert to JSON-serializable format
     result = []
-    for wareky in sorted(tree.keys()):
-        ware_node = {'id': f'W{wareky}', 'label': str(wareky), 'type': 'warehouse', 'children': [], 'count': 0}
-        for plntky in sorted(tree[wareky].keys()):
-            plnt_node = {'id': f'W{wareky}_P{plntky}', 'label': plntky, 'type': 'plant', 'children': [], 'count': 0}
-            for stlky in sorted(tree[wareky][plntky].keys()):
-                stl_node = {'id': f'W{wareky}_P{plntky}_S{stlky}', 'label': stlky, 'type': 'storage', 'children': [], 'count': 0}
-                for areaky in sorted(tree[wareky][plntky][stlky].keys()):
-                    area_node = {'id': f'W{wareky}_P{plntky}_S{stlky}_A{areaky}', 'label': areaky, 'type': 'area', 'children': [], 'count': 0}
-                    for zoneky in sorted(tree[wareky][plntky][stlky][areaky].keys()):
+    for wareky in sorted(tree.keys(), key=str):
+        wk = str(wareky)
+        wn = ware_names.get(wk, '')
+        ware_label = f"{wk} ({wn})" if wn else wk
+        ware_node = {'id': f'W{wk}', 'label': ware_label, 'type': 'warehouse', 'children': [], 'count': 0}
+        for plntky in sorted(tree[wareky].keys(), key=str):
+            pk = str(plntky)
+            pn = PLANT_NAMES.get(pk, '')
+            plnt_label = f"{pk} ({pn})" if pn else pk
+            plnt_node = {'id': f'W{wk}_P{pk}', 'label': plnt_label, 'type': 'plant', 'children': [], 'count': 0}
+            for stlky in sorted(tree[wareky][plntky].keys(), key=str):
+                sk = str(stlky)
+                sn = stl_names.get((wk, pk, sk), '')
+                stl_label = f"{sk} ({sn})" if sn else sk
+                stl_node = {'id': f'W{wk}_P{pk}_S{sk}', 'label': stl_label, 'type': 'storage', 'children': [], 'count': 0}
+                for areaky in sorted(tree[wareky][plntky][stlky].keys(), key=str):
+                    ak = str(areaky)
+                    an = area_names.get((wk, ak), '')
+                    area_label = f"{ak} ({an})" if an else ak
+                    area_node = {'id': f'W{wk}_P{pk}_S{sk}_A{ak}', 'label': area_label, 'type': 'area', 'children': [], 'count': 0}
+                    for zoneky in sorted(tree[wareky][plntky][stlky][areaky].keys(), key=str):
                         locs = sorted(tree[wareky][plntky][stlky][areaky][zoneky])
                         loc_count = len(locs)
-                        zone_label = zoneky
-                        name = zone_names.get((wareky, zoneky), '')
+                        zk = str(zoneky)
+                        zone_label = zk
+                        name = zone_names.get((wk, zk), '')
                         if name and name.strip():
-                            zone_label = f"{zoneky} ({name.strip()})"
+                            zone_label = f"{zk} ({name.strip()})"
                         zone_node = {
-                            'id': f'W{wareky}_P{plntky}_S{stlky}_A{areaky}_Z{zoneky}',
+                            'id': f'W{wk}_P{pk}_S{sk}_A{ak}_Z{zk}',
                             'label': zone_label,
                             'type': 'zone',
                             'locations': locs[:200],
@@ -593,14 +669,26 @@ def api_hierarchy_summary():
 @app.route('/api/hierarchy/stock')
 def api_hierarchy_stock():
     """Return aggregated stock quantities for children of a given hierarchy node.
-    Parameters: level (warehouse|plant|storage|area|zone), wareky, plntky, stlky, areaky, zoneky
+    Parameters: level (warehouse|plant|storage|area|zone), wareky, plntky, stlky, areaky, zoneky, aging_months
     """
+    from datetime import datetime, timedelta
     level = request.args.get('level', 'warehouse')
     wareky = request.args.get('wareky')
     plntky = request.args.get('plntky')
     stlky = request.args.get('stlky')
     areaky = request.args.get('areaky')
     zoneky = request.args.get('zoneky')
+    aging_months = request.args.get('aging_months', '0')  # 0=전체, 1~6=N개월 이상
+
+    # Calculate aging cutoff date (YYYYMMDD format)
+    try:
+        am = int(aging_months)
+    except:
+        am = 0
+    aging_cutoff = None
+    if am > 0:
+        cutoff_date = datetime.now() - timedelta(days=am * 30)
+        aging_cutoff = cutoff_date.strftime('%Y%m%d')
 
     conn = get_db()
     cur = conn.cursor()
@@ -748,12 +836,121 @@ def api_hierarchy_stock():
             usage = round(pq * 100.0 / capa, 1) if capa > 0 else 0
             result.append({'label': r['label'], 'qty': pq, 'cnt': r['cnt'], 'skus': skus, 'maxcpc': capa, 'usage': usage})
 
+    # Lookup names from master tables
+    if result:
+        name_map = {}
+        try:
+            if level == 'warehouse':
+                nrows = cur.execute("SELECT WAREKY, NAME01 FROM WAHMA").fetchall()
+                name_map = {str(r['WAREKY']).strip(): (r['NAME01'] or '').strip() for r in nrows}
+            elif level == 'plant':
+                name_map = dict(PLANT_NAMES)
+            elif level == 'storage':
+                nrows = cur.execute("SELECT STLKY, STLNM FROM STLMA WHERE WAREKY=? AND PLNTKY=?", (wareky, plntky or '')).fetchall()
+                name_map = {str(r['STLKY']).strip(): (r['STLNM'] or '').strip() for r in nrows}
+            elif level == 'area':
+                nrows = cur.execute("SELECT AREAKY, SHORTX FROM AREMA WHERE WAREKY=?", (wareky,)).fetchall()
+                name_map = {str(r['AREAKY']).strip(): (r['SHORTX'] or '').strip() for r in nrows}
+            elif level == 'zone':
+                nrows = cur.execute("SELECT ZONEKY, SHORTX FROM ZONMA WHERE WAREKY=? AND AREAKY=?", (wareky, areaky or '')).fetchall()
+                name_map = {str(r['ZONEKY']).strip(): (r['SHORTX'] or '').strip() for r in nrows}
+            elif level == 'location':
+                labels = [item['label'] for item in result]
+                if labels:
+                    ph = ",".join(["?" for _ in labels])
+                    nrows = cur.execute(f"SELECT LOCAKY, SHORTX FROM LOCMA WHERE WAREKY=? AND LOCAKY IN ({ph})", [wareky] + labels).fetchall()
+                    name_map = {str(r['LOCAKY']).strip(): (r['SHORTX'] or '').strip() for r in nrows}
+        except Exception as e:
+            print(f"[name_map] Error for level={level}: {e}")
+        for item in result:
+            item['name'] = name_map.get(item['label'], '')
+
+    # Calculate aging ratio for each result item
+    if aging_cutoff and result:
+        # Build aging query based on level
+        for item in result:
+            aging_where = ["s.QTSIWH > 0", "s.LOTA11 != ''", f"s.LOTA11 <= '{aging_cutoff}'"]
+            aging_params = []
+
+            if level == 'warehouse':
+                aging_where.append("s.WAREKY=?")
+                aging_params.append(item['label'])
+            elif level == 'plant':
+                aging_where.append("s.WAREKY=?")
+                aging_params.append(wareky)
+                lbl_orig = '' if item['label'] == '(미지정)' else item['label']
+                if item['label'] == '(미지정)':
+                    aging_where.append("TRIM(s.LOTA02)=''")
+                else:
+                    aging_where.append("s.LOTA02=?")
+                    aging_params.append(lbl_orig)
+            elif level == 'storage':
+                aging_where.append("s.WAREKY=?")
+                aging_params.append(wareky)
+                if plntky and plntky != '(미지정)':
+                    aging_where.append("s.LOTA02=?")
+                    aging_params.append(plntky)
+                lbl_orig = '' if item['label'] == '(미지정)' else item['label']
+                if item['label'] == '(미지정)':
+                    aging_where.append("TRIM(s.LOTA01)=''")
+                else:
+                    aging_where.append("s.LOTA01=?")
+                    aging_params.append(lbl_orig)
+            elif level == 'area':
+                aging_where.append("s.WAREKY=?")
+                aging_params.append(wareky)
+                if plntky and plntky != '(미지정)':
+                    aging_where.append("s.LOTA02=?")
+                    aging_params.append(plntky)
+                if stlky and stlky != '(미지정)':
+                    aging_where.append("s.LOTA01=?")
+                    aging_params.append(stlky)
+                aging_where.append("s.AREAKY=?")
+                aging_params.append(item['label'])
+            elif level == 'zone':
+                aging_where.append("s.WAREKY=?")
+                aging_params.append(wareky)
+                aging_where.append("s.AREAKY=?")
+                aging_params.append(areaky)
+                aging_where.append("s.ZONEKY=?")
+                aging_params.append(item['label'])
+            elif level == 'location':
+                aging_where.append("s.WAREKY=?")
+                aging_params.append(wareky)
+                aging_where.append("s.ZONEKY=?")
+                aging_params.append(zoneky)
+                if areaky:
+                    aging_where.append("s.AREAKY=?")
+                    aging_params.append(areaky)
+                aging_where.append("s.LOCAKY=?")
+                aging_params.append(item['label'])
+
+            where_clause = " AND ".join(aging_where)
+            aging_row = cur.execute(f"""
+                SELECT CAST(ROUND(SUM(s.QTSIWH) / 20.0) AS INTEGER) as aging_qty
+                FROM STKKA s WHERE {where_clause}
+            """, aging_params).fetchone()
+            aging_qty = aging_row['aging_qty'] if aging_row and aging_row['aging_qty'] else 0
+            item['aging_qty'] = aging_qty
+            item['aging_ratio'] = round(aging_qty * 100.0 / item['qty'], 1) if item['qty'] > 0 else 0
+    else:
+        # No aging filter - still compute default aging ratio (all stock = 0% aging by definition if no cutoff)
+        for item in result:
+            item['aging_qty'] = 0
+            item['aging_ratio'] = 0
+
     conn.close()
 
     # Calculate max for scaling
     max_qty = max((r['qty'] for r in result), default=0)
     total_qty = sum(r['qty'] for r in result)
-    return jsonify({'items': result, 'max_qty': max_qty, 'total_qty': total_qty, 'level': level})
+    total_aging_qty = sum(r.get('aging_qty', 0) for r in result)
+    total_aging_ratio = round(total_aging_qty * 100.0 / total_qty, 1) if total_qty > 0 else 0
+    return jsonify({
+        'items': result, 'max_qty': max_qty, 'total_qty': total_qty, 'level': level,
+        'aging_months': am, 'aging_cutoff': aging_cutoff or '',
+        'total_aging_qty': total_aging_qty, 'total_aging_ratio': total_aging_ratio
+    })
 
 
 
@@ -776,70 +973,86 @@ STRUCTURE_HTML = r"""
 <title>저장 위치 구조 조회 | 적재율 히트맵</title>
 <style>
 :root {
-  --bg-primary: #0f172a;
-  --bg-secondary: #1e293b;
-  --bg-tertiary: #334155;
-  --border: #334155;
-  --text-primary: #e2e8f0;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --accent: #38bdf8;
-  --accent-dark: #0ea5e9;
-  --green: #4ade80;
-  --yellow: #fbbf24;
-  --purple: #a78bfa;
+  --bg-primary: #080d1a;
+  --bg-secondary: #0e1529;
+  --bg-tertiary: #141d35;
+  --border: rgba(120,160,255,0.1);
+  --text-primary: #edf0f7;
+  --text-secondary: #a0b0d0;
+  --text-muted: #5a6d8e;
+  --accent: #6ea8fe;
+  --accent-dark: #4a8af0;
+  --green: #34d399;
+  --yellow: #fcd34d;
+  --purple: #b197fc;
   --pink: #f472b6;
-  --orange: #fb923c;
-  --red: #f87171;
+  --orange: #fdba74;
+  --red: #fca5a5;
+  --glass: rgba(14,21,41,0.7);
+  --glass-border: rgba(120,160,255,0.12);
+  --glow: rgba(110,168,254,0.06);
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; background: var(--bg-primary); color: var(--text-primary); }
+::selection { background: rgba(110,168,254,0.35); }
 
 /* Header */
 .header {
-  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  background: linear-gradient(135deg, #0a1128 0%, #121d3a 50%, #162550 100%);
   padding: 14px 24px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(110,168,254,0.1);
   display: flex; align-items: center; gap: 16px;
+  box-shadow: 0 4px 30px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03);
 }
-.header h1 { font-size: 18px; color: var(--accent); font-weight: 600; }
-.header .badge { font-size: 11px; padding: 3px 10px; border-radius: 4px; }
-.header .b1 { background: #164e63; color: #67e8f9; }
-.header .b2 { background: #1e3a5f; color: #38bdf8; }
-.header a { color: var(--text-secondary); text-decoration: none; font-size: 13px; margin-left: auto; }
-.header a:hover { color: var(--accent); }
+.header h1 { font-size: 18px; background: linear-gradient(135deg, #6ea8fe, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700; letter-spacing: 0.5px; }
+.header .badge { font-size: 11px; padding: 4px 12px; border-radius: 6px; backdrop-filter: blur(8px); }
+.header .b1 { background: rgba(110,168,254,0.12); color: var(--accent); border: 1px solid rgba(110,168,254,0.2); }
+.header .b2 { background: rgba(160,176,208,0.08); color: var(--text-secondary); border: 1px solid rgba(160,176,208,0.1); }
+.header a { color: var(--text-secondary); text-decoration: none; font-size: 13px; margin-left: auto; padding: 6px 16px; border-radius: 8px; background: rgba(110,168,254,0.08); border: 1px solid rgba(110,168,254,0.12); transition: all 0.2s; }
+.header a:hover { color: var(--accent); background: rgba(110,168,254,0.18); border-color: rgba(110,168,254,0.3); }
 
 /* Layout */
-.layout { display: flex; height: calc(100vh - 52px); }
+.layout { display: flex; height: calc(100vh - 52px); position: relative; background: linear-gradient(180deg, var(--bg-primary) 0%, #060a14 100%); }
 
 /* Left panel - tree */
 .tree-panel {
   width: 420px; min-width: 320px; max-width: 600px;
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--bg-secondary) 0%, #0b1020 100%);
+  border-right: 1px solid var(--glass-border);
   display: flex; flex-direction: column;
   overflow: hidden;
+  transition: width 0.3s ease, min-width 0.3s ease, opacity 0.3s ease;
 }
+.tree-panel.collapsed {
+  width: 0px !important; min-width: 0 !important;
+  opacity: 0; pointer-events: none;
+  border-right: none;
+}
+.resize-handle.collapsed { display: none; }
 .tree-toolbar {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--glass-border);
+  background: linear-gradient(135deg, rgba(20,29,53,0.9), rgba(14,21,41,0.95));
+  backdrop-filter: blur(12px);
   display: flex; flex-direction: column; gap: 8px;
 }
-.tree-toolbar h3 { font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; }
+.tree-toolbar h3 { font-size: 13px; background: linear-gradient(90deg, var(--accent), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; }
 .search-box {
-  width: 100%; padding: 8px 12px;
-  background: var(--bg-primary); border: 1px solid var(--border);
-  color: var(--text-primary); border-radius: 6px; font-size: 13px; outline: none;
+  width: 100%; padding: 9px 14px;
+  background: rgba(8,13,26,0.6); border: 1px solid var(--border);
+  color: var(--text-primary); border-radius: 8px; font-size: 13px; outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
-.search-box:focus { border-color: var(--accent); }
+.search-box:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(110,168,254,0.1); }
 .search-box::placeholder { color: var(--text-muted); }
 .tree-actions { display: flex; gap: 6px; }
 .tree-actions button {
-  flex: 1; padding: 6px 10px; font-size: 11px;
-  background: var(--bg-tertiary); color: var(--text-secondary);
-  border: none; border-radius: 4px; cursor: pointer;
+  flex: 1; padding: 7px 10px; font-size: 11px;
+  background: rgba(110,168,254,0.06); color: var(--text-secondary);
+  border: 1px solid rgba(110,168,254,0.1); border-radius: 8px; cursor: pointer;
+  transition: all 0.2s; font-weight: 500;
 }
-.tree-actions button:hover { background: #475569; color: var(--text-primary); }
+.tree-actions button:hover { background: rgba(110,168,254,0.15); color: var(--accent); border-color: rgba(110,168,254,0.25); box-shadow: 0 2px 12px rgba(110,168,254,0.1); }
 .tree-container {
   flex: 1; overflow-y: auto; padding: 8px 0;
 }
@@ -856,8 +1069,8 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
   transition: background 0.1s;
   white-space: nowrap;
 }
-.tree-row:hover { background: rgba(56,189,248,0.06); }
-.tree-row.selected { background: rgba(56,189,248,0.12); border-left-color: var(--accent); }
+.tree-row:hover { background: rgba(110,168,254,0.06); }
+.tree-row.selected { background: linear-gradient(90deg, rgba(110,168,254,0.15), rgba(110,168,254,0.05)); border-left-color: var(--accent); box-shadow: inset 0 0 20px rgba(110,168,254,0.05); }
 .tree-toggle {
   width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
   font-size: 10px; color: var(--text-muted); flex-shrink: 0; transition: transform 0.15s;
@@ -887,8 +1100,9 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
 /* Summary cards */
 .summary-bar {
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--glass-border);
+  background: linear-gradient(135deg, rgba(20,29,53,0.95), rgba(14,21,41,0.9));
+  backdrop-filter: blur(12px);
 }
 .summary-cards {
   display: grid;
@@ -896,24 +1110,74 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
   gap: 10px;
 }
 .s-card {
-  background: var(--bg-primary); border: 1px solid var(--border);
-  border-radius: 8px; padding: 10px 14px; text-align: center;
+  background: rgba(110,168,254,0.05); border: 1px solid rgba(110,168,254,0.1);
+  border-radius: 12px; padding: 12px 14px; text-align: center;
+  backdrop-filter: blur(8px);
+  transition: all 0.2s;
 }
-.s-card .s-val { font-size: 22px; font-weight: 700; color: var(--accent); }
+.s-card:hover { background: rgba(110,168,254,0.1); border-color: rgba(110,168,254,0.2); box-shadow: 0 4px 20px rgba(110,168,254,0.08); }
+.s-card .s-val { font-size: 22px; font-weight: 700; background: linear-gradient(135deg, var(--accent), #93c5fd); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
 .s-card .s-lbl { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 
 /* Breadcrumb */
 .breadcrumb {
-  padding: 14px 28px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  font-size: 18px; color: var(--text-muted);
-  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  padding: 12px 28px;
+  background: rgba(14,21,41,0.8);
+  border-bottom: 1px solid var(--glass-border);
+  font-size: 16px; color: var(--text-muted);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  backdrop-filter: blur(8px);
 }
-.breadcrumb span { cursor: pointer; color: var(--text-secondary); }
-.breadcrumb span:hover { color: var(--accent); }
-.breadcrumb .sep { color: var(--text-muted); font-size: 20px; }
-.breadcrumb .current { color: var(--accent); font-weight: 600; }
+.breadcrumb .bc-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 16px; border-radius: 10px; cursor: pointer;
+  background: rgba(110,168,254,0.06); color: var(--text-secondary);
+  border: 1px solid rgba(110,168,254,0.1); font-size: 15px; font-weight: 500;
+  transition: all 0.25s; white-space: nowrap;
+}
+.breadcrumb .bc-btn:hover { background: rgba(110,168,254,0.15); color: var(--accent); border-color: rgba(110,168,254,0.3); box-shadow: 0 2px 12px rgba(110,168,254,0.1); }
+.breadcrumb .bc-btn.current {
+  background: linear-gradient(135deg, rgba(110,168,254,0.2), rgba(167,139,250,0.12)); color: var(--accent);
+  border-color: rgba(110,168,254,0.35); font-weight: 600;
+  box-shadow: 0 2px 16px rgba(110,168,254,0.15), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+.breadcrumb .sep { color: var(--text-muted); font-size: 18px; margin: 0 2px; user-select: none; }
+
+/* Aging filter bar - persistent separate row */
+.aging-filter-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 28px;
+  background: linear-gradient(135deg, rgba(14,21,41,0.95), rgba(10,17,40,0.9));
+  border-bottom: 1px solid var(--glass-border);
+  font-size: 16px; flex-shrink: 0; flex-wrap: wrap;
+  backdrop-filter: blur(8px);
+}
+.aging-filter-bar .aging-info {
+  margin-left: 12px; font-size: 14px; color: var(--text-muted); font-style: italic;
+}
+.aging-label {
+  color: var(--accent) !important; font-weight: 700; font-size: 16px !important;
+  cursor: default !important; margin-right: 6px;
+}
+.aging-radio {
+  cursor: pointer; display: inline-flex; align-items: center;
+  padding: 6px 14px; border-radius: 10px;
+  background: rgba(110,168,254,0.04); border: 1px solid rgba(110,168,254,0.08);
+  transition: all 0.25s;
+}
+.aging-radio:hover { background: rgba(110,168,254,0.12); border-color: rgba(110,168,254,0.25); box-shadow: 0 2px 10px rgba(110,168,254,0.08); }
+.aging-radio input[type="radio"] { display: none; }
+.aging-radio span {
+  font-size: 15px !important; color: var(--text-secondary) !important;
+  cursor: pointer !important; white-space: nowrap; font-weight: 500;
+}
+.aging-radio input[type="radio"]:checked + span {
+  color: #6ea8fe !important; font-weight: 700;
+}
+.aging-radio:has(input:checked) {
+  background: linear-gradient(135deg, rgba(110,168,254,0.18), rgba(167,139,250,0.1)); border-color: rgba(110,168,254,0.4);
+  box-shadow: 0 2px 16px rgba(110,168,254,0.2), inset 0 1px 0 rgba(255,255,255,0.05);
+}
 
 /* Detail content */
 .detail-content {
@@ -931,9 +1195,9 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
   border-bottom: 2px solid var(--border); font-size: 11px; text-transform: uppercase;
 }
 .data-table td {
-  padding: 7px 12px; border-bottom: 1px solid rgba(51,65,85,0.5);
+  padding: 7px 12px; border-bottom: 1px solid rgba(99,140,255,0.06);
 }
-.data-table tr:hover td { background: rgba(56,189,248,0.04); }
+.data-table tr:hover td { background: rgba(99,140,255,0.06); }
 .data-table .clickable { cursor: pointer; color: var(--accent); }
 .data-table .clickable:hover { text-decoration: underline; }
 
@@ -953,60 +1217,70 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
 
 /* View tabs */
 .view-tabs {
-  display: flex; border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
+  display: flex; border-bottom: 1px solid var(--glass-border);
+  background: rgba(14,21,41,0.8); backdrop-filter: blur(8px);
 }
 .view-tab {
-  padding: 8px 20px; font-size: 13px; cursor: pointer;
+  padding: 10px 22px; font-size: 13px; cursor: pointer;
   color: var(--text-muted); border-bottom: 2px solid transparent;
-  transition: all 0.15s; background: none; border-top: none; border-left: none; border-right: none;
+  transition: all 0.25s; background: none; border-top: none; border-left: none; border-right: none; font-weight: 500;
 }
-.view-tab:hover { color: var(--text-primary); background: rgba(56,189,248,0.05); }
-.view-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.view-tab:hover { color: var(--text-primary); background: rgba(110,168,254,0.06); }
+.view-tab.active { color: var(--accent); border-bottom-color: var(--accent); background: rgba(110,168,254,0.04); }
 
 /* Heatmap container */
 .heatmap-container {
-  position: relative; flex: 1; overflow: auto; background: var(--bg-primary);
+  position: relative; flex: 1; overflow: auto; background: linear-gradient(180deg, var(--bg-primary), #060a14);
   display: flex; flex-direction: column;
 }
 .heatmap-header {
   display: flex; align-items: center; gap: 16px; padding: 12px 20px;
-  border-bottom: 1px solid var(--border); background: var(--bg-secondary); flex-shrink: 0; flex-wrap: wrap;
+  border-bottom: 1px solid var(--glass-border); background: linear-gradient(135deg, rgba(20,29,53,0.95), rgba(14,21,41,0.9)); backdrop-filter: blur(8px); flex-shrink: 0; flex-wrap: wrap;
 }
-.heatmap-header .hm-title { font-size: 14px; font-weight: 600; color: var(--accent); }
+.heatmap-header .hm-title { font-size: 14px; font-weight: 700; background: linear-gradient(90deg, var(--accent), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
 .heatmap-header .hm-stat { font-size: 12px; color: var(--text-muted); }
 .heatmap-header .hm-stat b { color: var(--text-primary); font-weight: 700; }
 .heatmap-header .hm-sort { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .heatmap-header .hm-sort label { font-size: 11px; color: var(--text-muted); }
 .heatmap-header .hm-sort select {
-  background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-primary);
-  padding: 4px 8px; border-radius: 4px; font-size: 11px; outline: none;
+  background: rgba(8,13,26,0.6); border: 1px solid var(--border); color: var(--text-primary);
+  padding: 5px 10px; border-radius: 6px; font-size: 11px; outline: none;
 }
 
 .heatmap-grid-wrap { flex: 1; overflow: auto; padding: 16px; }
 .heatmap-grid { display: flex; flex-wrap: wrap; gap: 5px; align-content: flex-start; }
 
 .hm-cell {
-  border-radius: 6px; cursor: pointer; position: relative;
+  border-radius: 12px; cursor: pointer; position: relative;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  transition: transform 0.12s, box-shadow 0.12s;
+  transition: transform 0.2s, box-shadow 0.2s;
   border: 1px solid rgba(255,255,255,0.06);
   overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.06);
 }
-.hm-cell:hover { transform: scale(1.08); z-index: 2; box-shadow: 0 0 14px rgba(56,189,248,0.4); border-color: var(--accent); }
+.hm-cell:hover { transform: scale(1.08); z-index: 2; box-shadow: 0 8px 32px rgba(110,168,254,0.25), 0 0 0 1px var(--accent); border-color: var(--accent); }
 .hm-cell .hm-lbl {
-  font-weight: 600; text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+  font-weight: 700;
   text-align: center; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; width: 100%; padding: 0 3px;
+  white-space: nowrap; width: 100%; padding: 0 4px;
 }
-.hm-cell .hm-pct { font-weight: 800; text-shadow: 0 1px 3px rgba(0,0,0,0.7); }
-.hm-cell .hm-sub { opacity: 0.85; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+.hm-cell .hm-pct { font-weight: 800; }
+.hm-cell .hm-sub { opacity: 0.9; }
+.hm-cell .hm-aging {
+  font-weight: 900;
+  text-align: center; width: 100%; padding: 6px 8px;
+  background: linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.85) 100%);
+  border-radius: 0 0 11px 11px;
+  margin-top: auto; flex-shrink: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  letter-spacing: 1px;
+}
 
 /* Heatmap legend */
 .hm-legend {
   display: flex; align-items: center; gap: 12px; padding: 10px 20px;
-  border-top: 1px solid var(--border); flex-shrink: 0;
-  background: var(--bg-secondary); flex-wrap: wrap;
+  border-top: 1px solid var(--glass-border); flex-shrink: 0;
+  background: linear-gradient(135deg, rgba(20,29,53,0.95), rgba(14,21,41,0.9)); backdrop-filter: blur(8px); flex-wrap: wrap;
 }
 .hm-legend .leg-title { font-size: 11px; color: var(--text-muted); font-weight: 600; }
 .hm-legend .leg-bar {
@@ -1020,9 +1294,9 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
 
 /* Tooltip */
 .hm-tooltip {
-  position: fixed; display: none; background: rgba(15,23,42,0.96); border: 1px solid var(--accent);
-  border-radius: 8px; padding: 12px 16px; pointer-events: none; z-index: 1000;
-  min-width: 220px; backdrop-filter: blur(12px); box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  position: fixed; display: none; background: rgba(8,13,26,0.92); border: 1px solid rgba(110,168,254,0.3);
+  border-radius: 14px; padding: 16px 20px; pointer-events: none; z-index: 1000;
+  min-width: 250px; backdrop-filter: blur(20px) saturate(1.2); box-shadow: 0 16px 48px rgba(0,0,0,0.6), 0 0 30px rgba(110,168,254,0.08), inset 0 1px 0 rgba(255,255,255,0.05);
 }
 .hm-tooltip .tt-name { color: var(--accent); font-weight: 700; font-size: 14px; margin-bottom: 6px; }
 .hm-tooltip .tt-pct { font-size: 28px; font-weight: 900; margin: 4px 0; }
@@ -1033,7 +1307,7 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
 
 /* Welcome */
 .welcome { text-align: center; padding: 60px 40px; }
-.welcome h2 { font-size: 24px; color: var(--text-primary); margin-bottom: 12px; }
+.welcome h2 { font-size: 24px; background: linear-gradient(135deg, var(--text-primary), var(--accent)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 12px; font-weight: 700; }
 .welcome p { color: var(--text-muted); font-size: 14px; line-height: 1.8; }
 .welcome .hierarchy-demo { margin-top: 24px; display: inline-block; text-align: left; font-size: 14px; color: var(--text-secondary); line-height: 2; }
 
@@ -1041,8 +1315,26 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
 .resize-handle {
   width: 4px; cursor: col-resize; background: transparent; flex-shrink: 0;
   transition: background 0.2s;
+  border-left: 1px solid var(--glass-border);
 }
-.resize-handle:hover, .resize-handle.active { background: var(--accent); }
+.resize-handle:hover, .resize-handle.active { background: linear-gradient(180deg, var(--accent), var(--purple)); }
+
+/* Tree panel toggle */
+.tree-toggle-btn {
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  z-index: 20; width: 26px; height: 64px;
+  background: linear-gradient(180deg, rgba(20,29,53,0.95), rgba(14,21,41,0.9)); border: 1px solid rgba(110,168,254,0.15);
+  border-left: none; border-radius: 0 10px 10px 0;
+  color: var(--text-secondary); font-size: 14px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: all 0.25s ease;
+  box-shadow: 3px 0 16px rgba(0,0,0,0.3); backdrop-filter: blur(12px);
+}
+.tree-toggle-btn:hover { background: linear-gradient(180deg, var(--accent), var(--accent-dark)); color: #fff; box-shadow: 3px 0 20px rgba(110,168,254,0.3); border-color: var(--accent); }
+.tree-toggle-btn .arrow { transition: transform 0.3s ease; display: inline-block; }
+.tree-toggle-btn.collapsed .arrow { transform: rotate(180deg); }
+
+
 
 /* Loading */
 .loading-spinner {
@@ -1050,12 +1342,13 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
 }
 
 /* Highlight matches */
-.match-highlight { background: rgba(56,189,248,0.25); border-radius: 2px; padding: 0 1px; }
+.match-highlight { background: rgba(110,168,254,0.2); border-radius: 3px; padding: 0 2px; }
 
 @media (max-width: 768px) {
   .layout { flex-direction: column; }
   .tree-panel { width: 100% !important; max-width: 100%; height: 50vh; }
   .resize-handle { display: none; }
+  .tree-toggle-btn { display: none; }
 }
 </style>
 </head>
@@ -1069,8 +1362,13 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
 </div>
 
 <div class="layout">
+  <!-- Tree panel toggle button -->
+  <button class="tree-toggle-btn collapsed" id="treePanelToggle" onclick="toggleTreePanel()" title="트리 패널 보이기">
+    <span class="arrow">◀</span>
+  </button>
+
   <!-- Tree panel -->
-  <div class="tree-panel" id="treePanel">
+  <div class="tree-panel collapsed" id="treePanel" style="width:0px;">
     <div class="tree-toolbar">
       <h3>구조 탐색</h3>
       <input type="text" class="search-box" id="searchInput"
@@ -1088,7 +1386,7 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
   </div>
 
   <!-- Resize handle -->
-  <div class="resize-handle" id="resizeHandle"></div>
+  <div class="resize-handle collapsed" id="resizeHandle"></div>
 
   <!-- Detail panel -->
   <div class="detail-panel">
@@ -1097,6 +1395,23 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
     </div>
     <div class="breadcrumb" id="breadcrumb">
       <span class="current">전체 구조</span>
+    </div>
+    <div class="aging-filter-bar" id="agingFilterBar">
+      <span class="aging-label">📅 장기재고:</span>
+      <label class="aging-radio" onclick="onAgingClick('0')"><input type="radio" name="agingMonths" value="0" checked><span>전체</span></label>
+      <label class="aging-radio" onclick="onAgingClick('1')"><input type="radio" name="agingMonths" value="1"><span>1개월+</span></label>
+      <label class="aging-radio" onclick="onAgingClick('2')"><input type="radio" name="agingMonths" value="2"><span>2개월+</span></label>
+      <label class="aging-radio" onclick="onAgingClick('3')"><input type="radio" name="agingMonths" value="3"><span>3개월+</span></label>
+      <label class="aging-radio" onclick="onAgingClick('4')"><input type="radio" name="agingMonths" value="4"><span>4개월+</span></label>
+      <label class="aging-radio" onclick="onAgingClick('5')"><input type="radio" name="agingMonths" value="5"><span>5개월+</span></label>
+      <label class="aging-radio" onclick="onAgingClick('6')"><input type="radio" name="agingMonths" value="6"><span>6개월+</span></label>
+      <label class="aging-radio" onclick="onAgingClick('7')"><input type="radio" name="agingMonths" value="7"><span>7개월+</span></label>
+      <label class="aging-radio" onclick="onAgingClick('8')"><input type="radio" name="agingMonths" value="8"><span>8개월+</span></label>
+      <label class="aging-radio" onclick="onAgingClick('9')"><input type="radio" name="agingMonths" value="9"><span>9개월+</span></label>
+      <label class="aging-radio" onclick="onAgingClick('10')"><input type="radio" name="agingMonths" value="10"><span>10개월+</span></label>
+      <label class="aging-radio" onclick="onAgingClick('11')"><input type="radio" name="agingMonths" value="11"><span>11개월+</span></label>
+      <label class="aging-radio" onclick="onAgingClick('12')"><input type="radio" name="agingMonths" value="12"><span>12개월+</span></label>
+      <span class="aging-info" id="agingInfo"></span>
     </div>
     <div class="view-tabs" id="viewTabs" style="display:none;">
       <button class="view-tab active" data-view="heatmap" onclick="switchView('heatmap')">🟩 적재율 히트맵</button>
@@ -1110,12 +1425,13 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
         <span class="hm-stat">CAPA: <b id="hmCapa">-</b> PLT</span>
         <span class="hm-stat">적재율: <b id="hmUsage">-</b></span>
         <span class="hm-stat">항목: <b id="hmCount">-</b></span>
+        <span class="hm-stat" id="hmAgingStat" style="display:none;">장기재고: <b id="hmAgingRatio" style="color:var(--yellow);">-</b></span>
         <div class="hm-sort">
           <label>정렬:</label>
           <select id="hmSortBy" onchange="resortHeatmap()">
+            <option value="label_asc" selected>이름순</option>
             <option value="usage_desc">적재율 높은순</option>
             <option value="usage_asc">적재율 낮은순</option>
-            <option value="label_asc">이름순</option>
             <option value="qty_desc">재고량 높은순</option>
           </select>
         </div>
@@ -1178,6 +1494,8 @@ body { font-family: 'Segoe UI', -apple-system, 'Malgun Gothic', sans-serif; back
   <div class="tt-row"><span class="k">CAPA</span><span class="v" id="ttCapa"></span></div>
   <div class="tt-row"><span class="k">재고건수</span><span class="v" id="ttCnt"></span></div>
   <div class="tt-row"><span class="k">지번수</span><span class="v" id="ttLocs"></span></div>
+  <div class="tt-row" id="ttAgingRow" style="display:none;"><span class="k">장기재고</span><span class="v" id="ttAging"></span></div>
+  <div class="tt-row" id="ttAgingRatioRow" style="display:none;"><span class="k">장기재고 비율</span><span class="v" id="ttAgingRatio" style="color:var(--yellow);"></span></div>
   <div class="tt-status" id="ttStatus"></div>
 </div>
 
@@ -1192,6 +1510,7 @@ let currentView = 'heatmap';
 let lastHeatmapItems = [];
 let lastHeatmapTotalQty = 0;
 let lastHeatmapLevel = '';
+let lastSelectedNode = null;
 
 const ICONS = {
   warehouse: '📦', plant: '🏭', storage: '📍',
@@ -1209,7 +1528,7 @@ const CHILD_LEVEL = {
 // Color functions
 // ========================
 function usageColor(u) {
-  if (u <= 0) return '#334155';
+  if (u <= 0) return '#cbd5e1';
   if (u <= 40) return '#22c55e';
   if (u <= 60) return '#84cc16';
   if (u <= 70) return '#a3e635';
@@ -1220,17 +1539,17 @@ function usageColor(u) {
   return '#dc2626';
 }
 function usageTextColor(u) {
-  if (u <= 0) return '#64748b';
-  if (u <= 70) return '#0f172a';
+  if (u <= 0) return '#94a3b8';
+  if (u <= 70) return '#1e293b';
   return '#fff';
 }
 function usageStatus(u) {
-  if (u <= 0) return { text:'재고없음', bg:'#334155', color:'#94a3b8' };
-  if (u <= 40) return { text:'여유', bg:'rgba(34,197,94,0.2)', color:'#4ade80' };
-  if (u <= 60) return { text:'양호', bg:'rgba(163,230,53,0.2)', color:'#a3e635' };
-  if (u <= 80) return { text:'주의', bg:'rgba(250,204,21,0.2)', color:'#facc15' };
-  if (u <= 100) return { text:'포화 임박', bg:'rgba(251,146,60,0.2)', color:'#fb923c' };
-  return { text:'CAPA 초과', bg:'rgba(248,113,113,0.2)', color:'#f87171' };
+  if (u <= 0) return { text:'재고없음', bg:'#f1f5f9', color:'#94a3b8' };
+  if (u <= 40) return { text:'여유', bg:'rgba(22,163,74,0.1)', color:'#16a34a' };
+  if (u <= 60) return { text:'양호', bg:'rgba(101,163,13,0.1)', color:'#65a30d' };
+  if (u <= 80) return { text:'주의', bg:'rgba(217,119,6,0.1)', color:'#d97706' };
+  if (u <= 100) return { text:'포화 임박', bg:'rgba(234,88,12,0.1)', color:'#ea580c' };
+  return { text:'CAPA 초과', bg:'rgba(220,38,38,0.1)', color:'#dc2626' };
 }
 function formatNumber(n) {
   if (n == null) return '-';
@@ -1250,6 +1569,12 @@ async function loadTree() {
     treeData = data.tree;
     renderTree();
     loadSummary();
+
+    // 기본값: 1100 거점 자동 선택
+    const defaultNode = findNodeById(treeData, 'W1100');
+    if (defaultNode) {
+      navigateToNode('W1100');
+    }
   } catch(e) {
     document.getElementById('treeContainer').innerHTML =
       `<div style="padding:20px;color:var(--red);">로딩 실패: ${e.message}</div>`;
@@ -1400,7 +1725,28 @@ function switchView(view) {
 // ========================
 // Detail View
 // ========================
+function getAgingMonths() {
+  const checked = document.querySelector('input[name="agingMonths"]:checked');
+  return checked ? checked.value : '0';
+}
+
+function onAgingClick(val) {
+  // Select the radio button
+  const radio = document.querySelector(`input[name="agingMonths"][value="${val}"]`);
+  if (radio) radio.checked = true;
+
+  // Always execute query with current node
+  if (lastSelectedNode) {
+    if (lastSelectedNode.type === 'root') {
+      loadWarehouseHeatmap();
+    } else {
+      loadHeatmapForNode(lastSelectedNode);
+    }
+  }
+}
+
 function showNodeDetail(node) {
+  lastSelectedNode = node;
   updateBreadcrumb(node);
   document.getElementById('viewTabs').style.display = 'flex';
 
@@ -1415,6 +1761,12 @@ function showNodeDetail(node) {
   switchView(currentView);
 }
 
+function extractCode(label) {
+  // Extract code from label like "1100 (청주공장창고)" -> "1100"
+  const m = label.match(/^([^ ]+)/);
+  return m ? m[1] : label;
+}
+
 function showGroupDetail(node, content) {
   const typeLabel = TYPE_LABELS[node.type];
   let html = `<div class="detail-title">${ICONS[node.type]} ${typeLabel}: ${node.label}</div>`;
@@ -1425,20 +1777,23 @@ function showGroupDetail(node, content) {
     const childLabel = TYPE_LABELS[childType];
 
     html += `<table class="data-table"><thead><tr>`;
-    html += `<th>#</th><th>${childLabel}</th><th>하위 수</th><th>지번수</th><th>팔레트재고</th><th>Capa</th><th>적재율</th><th>비율</th>`;
+    html += `<th>#</th><th>${childLabel}</th><th>명칭</th><th>하위 수</th><th>지번수</th><th>팔레트재고</th><th>Capa</th><th>적재율</th><th>장기재고 비율</th><th>분포</th>`;
     html += `</tr></thead><tbody>`;
 
     node.children.forEach((child, i) => {
+      const code = extractCode(child.label);
       const pct = node.count > 0 ? ((child.count / node.count) * 100).toFixed(1) : 0;
       const barW = Math.max(2, Math.min(200, (child.count / node.count) * 200));
       html += `<tr onclick="navigateToNode('${child.id}')" style="cursor:pointer">`;
       html += `<td style="color:var(--text-muted)">${i+1}</td>`;
       html += `<td class="clickable">${ICONS[childType]} ${child.label}</td>`;
+      html += `<td class="stock-name" data-code="${code}" style="color:var(--text-muted);font-size:11px;">-</td>`;
       html += `<td>${child.children ? child.children.length : (child.locations ? child.locations.length : '-')}</td>`;
       html += `<td><b>${child.count.toLocaleString()}</b></td>`;
-      html += `<td class="stock-qty" data-label="${child.label}">-</td>`;
-      html += `<td class="stock-capa" data-label="${child.label}">-</td>`;
-      html += `<td class="stock-usage" data-label="${child.label}">-</td>`;
+      html += `<td class="stock-qty" data-code="${code}">-</td>`;
+      html += `<td class="stock-capa" data-code="${code}">-</td>`;
+      html += `<td class="stock-usage" data-code="${code}">-</td>`;
+      html += `<td class="stock-aging" data-code="${code}">-</td>`;
       html += `<td><div style="display:flex;align-items:center;gap:8px;"><div style="width:${barW}px;height:6px;background:var(--accent);border-radius:3px;"></div><span style="font-size:11px;color:var(--text-muted)">${pct}%</span></div></td>`;
       html += `</tr>`;
     });
@@ -1491,6 +1846,7 @@ function buildHeatmap(items, totalQty, levelName) {
 
   // Calculate cell size based on count
   const count = sorted.length;
+  const hasAging = getAgingMonths() !== '0';
   let cellW, cellH, fontSize, pctSize;
   if (count <= 8) { cellW=180; cellH=110; fontSize=14; pctSize=24; }
   else if (count <= 20) { cellW=145; cellH=90; fontSize=13; pctSize=21; }
@@ -1498,6 +1854,8 @@ function buildHeatmap(items, totalQty, levelName) {
   else if (count <= 100) { cellW=100; cellH=64; fontSize=11; pctSize=16; }
   else if (count <= 200) { cellW=80; cellH=52; fontSize=10; pctSize=14; }
   else { cellW=62; cellH=42; fontSize=9; pctSize=12; }
+  // 장기재고 표시 시 셀 높이 확대
+  if (hasAging) { cellH += 28; }
 
   sorted.forEach(item => {
     const u = item.usage || 0;
@@ -1507,7 +1865,7 @@ function buildHeatmap(items, totalQty, levelName) {
     const cell = document.createElement('div');
     cell.className = 'hm-cell';
     cell.style.width = cellW + 'px';
-    cell.style.height = cellH + 'px';
+    cell.style.minHeight = cellH + 'px';
     cell.style.background = bg;
     cell.style.color = fg;
 
@@ -1516,12 +1874,30 @@ function buildHeatmap(items, totalQty, levelName) {
     lbl.style.fontSize = fontSize + 'px';
     lbl.textContent = item.label;
 
+    // Show name below label if available
+    let nameEl = null;
+    if (item.name) {
+      nameEl = document.createElement('div');
+      nameEl.className = 'hm-name';
+      const nameFs = Math.max(11, fontSize);
+      nameEl.style.fontSize = nameFs + 'px';
+      nameEl.style.fontWeight = '600';
+      nameEl.style.opacity = '1';
+
+      nameEl.style.overflow = 'hidden';
+      nameEl.style.textOverflow = 'ellipsis';
+      nameEl.style.whiteSpace = 'nowrap';
+      nameEl.style.maxWidth = (cellW - 8) + 'px';
+      nameEl.textContent = item.name;
+    }
+
     const pct = document.createElement('div');
     pct.className = 'hm-pct';
     pct.style.fontSize = pctSize + 'px';
     pct.textContent = u > 0 ? Math.round(u) + '%' : '-';
 
     cell.appendChild(lbl);
+    if (nameEl) cell.appendChild(nameEl);
     cell.appendChild(pct);
 
     // Extra info for larger cells
@@ -1531,6 +1907,27 @@ function buildHeatmap(items, totalQty, levelName) {
       sub.style.fontSize = (fontSize - 2) + 'px';
       sub.textContent = formatNumber(item.qty) + ' / ' + formatNumber(item.maxcpc) + ' PLT';
       cell.appendChild(sub);
+    }
+
+    // Aging ratio at bottom of cell
+    const agingVal = item.aging_ratio || 0;
+    const agingMonthsSel = getAgingMonths();
+    if (agingMonthsSel !== '0' && agingVal > 0) {
+      const agingDiv = document.createElement('div');
+      agingDiv.className = 'hm-aging';
+      const agingFs = Math.max(13, fontSize + 1);
+      agingDiv.style.fontSize = agingFs + 'px';
+      agingDiv.style.color = agingVal >= 50 ? '#fde68a' : agingVal >= 30 ? '#fed7aa' : '#e0e7ff';
+      agingDiv.textContent = '장기 ' + agingVal.toFixed(1) + '%';
+      cell.appendChild(agingDiv);
+    } else if (agingMonthsSel !== '0') {
+      const agingDiv = document.createElement('div');
+      agingDiv.className = 'hm-aging';
+      const agingFs = Math.max(13, fontSize + 1);
+      agingDiv.style.fontSize = agingFs + 'px';
+      agingDiv.style.color = 'rgba(224,231,255,0.8)';
+      agingDiv.textContent = '장기 0%';
+      cell.appendChild(agingDiv);
     }
 
     // Click to navigate
@@ -1556,6 +1953,20 @@ function buildHeatmap(items, totalQty, levelName) {
   usageEl.textContent = totalUsage + '%';
   usageEl.style.color = totalUsage > 100 ? 'var(--red)' : totalUsage > 80 ? 'var(--orange)' : 'var(--green)';
   document.getElementById('hmCount').textContent = items.length + '개';
+
+  // Update aging stat in header
+  const agingStatEl = document.getElementById('hmAgingStat');
+  const amSel = getAgingMonths();
+  if (amSel !== '0') {
+    const totalAgingQty = items.reduce((s, i) => s + (i.aging_qty || 0), 0);
+    const totalAgingRatio = totalQty > 0 ? (totalAgingQty * 100 / totalQty).toFixed(1) : '0';
+    agingStatEl.style.display = '';
+    const arEl = document.getElementById('hmAgingRatio');
+    arEl.textContent = totalAgingRatio + '%';
+    arEl.style.color = totalAgingRatio >= 50 ? 'var(--yellow)' : totalAgingRatio >= 30 ? 'var(--orange)' : 'var(--green)';
+  } else {
+    agingStatEl.style.display = 'none';
+  }
 }
 
 function resortHeatmap() {
@@ -1571,7 +1982,7 @@ function showTooltip(e, item) {
   const tt = document.getElementById('hmTooltip');
   const u = item.usage || 0;
   const st = usageStatus(u);
-  document.getElementById('ttName').textContent = item.label;
+  document.getElementById('ttName').textContent = item.name ? item.label + ' (' + item.name + ')' : item.label;
   const pctEl = document.getElementById('ttPct');
   pctEl.textContent = u > 0 ? u.toFixed(1) + '%' : 'N/A';
   pctEl.style.color = usageColor(u === 0 ? 0.1 : u);
@@ -1579,6 +1990,22 @@ function showTooltip(e, item) {
   document.getElementById('ttCapa').textContent = formatNumber(item.maxcpc) + ' PLT';
   document.getElementById('ttCnt').textContent = (item.cnt || '-').toLocaleString();
   document.getElementById('ttLocs').textContent = (item.locs || '-').toLocaleString();
+  // Aging info in tooltip
+  const am = getAgingMonths();
+  const agingRow = document.getElementById('ttAgingRow');
+  const agingRatioRow = document.getElementById('ttAgingRatioRow');
+  if (am !== '0') {
+    agingRow.style.display = 'flex';
+    agingRatioRow.style.display = 'flex';
+    document.getElementById('ttAging').textContent = formatNumber(item.aging_qty || 0) + ' PLT';
+    const arVal = item.aging_ratio || 0;
+    const arEl = document.getElementById('ttAgingRatio');
+    arEl.textContent = arVal.toFixed(1) + '%';
+    arEl.style.color = arVal >= 50 ? 'var(--yellow)' : arVal >= 30 ? 'var(--orange)' : 'var(--green)';
+  } else {
+    agingRow.style.display = 'none';
+    agingRatioRow.style.display = 'none';
+  }
   const stEl = document.getElementById('ttStatus');
   stEl.textContent = st.text;
   stEl.style.background = st.bg;
@@ -1626,6 +2053,7 @@ async function loadHeatmapForNode(node) {
     childLevel = 'location';
   }
 
+  params.aging_months = getAgingMonths();
   const qs = new URLSearchParams(params).toString();
   try {
     const resp = await fetch(`/api/hierarchy/stock?${qs}`);
@@ -1641,26 +2069,49 @@ async function loadHeatmapForNode(node) {
 
     document.getElementById('heatmapContainer').style.display = currentView === 'heatmap' ? 'flex' : 'none';
     buildHeatmap(data.items, data.total_qty, childLevel);
+    updateAgingInfo(data);
 
-    // Update table view stock quantities, capa, and usage
+    // Update table view: names, stock quantities, capa, and usage
     data.items.forEach(item => {
-      const cells = document.querySelectorAll(`.stock-qty[data-label="${item.label}"]`);
+      const code = item.label;
+      // Update name in table
+      const nameCells = document.querySelectorAll(`.stock-name[data-code="${code}"]`);
+      nameCells.forEach(cell => {
+        cell.textContent = item.name || '-';
+        cell.style.color = item.name ? 'var(--text-secondary)' : 'var(--text-muted)';
+        cell.style.fontSize = '12px';
+      });
+      const cells = document.querySelectorAll(`.stock-qty[data-code="${code}"]`);
       cells.forEach(cell => {
         cell.textContent = formatNumber(item.qty);
         cell.style.color = 'var(--yellow)';
         cell.style.fontWeight = '600';
       });
-      const capaCells = document.querySelectorAll(`.stock-capa[data-label="${item.label}"]`);
+      const capaCells = document.querySelectorAll(`.stock-capa[data-code="${code}"]`);
       capaCells.forEach(cell => {
         cell.textContent = formatNumber(item.maxcpc || 0);
         cell.style.color = 'var(--green)';
       });
-      const usageCells = document.querySelectorAll(`.stock-usage[data-label="${item.label}"]`);
+      const usageCells = document.querySelectorAll(`.stock-usage[data-code="${code}"]`);
       usageCells.forEach(cell => {
         const u = item.usage || 0;
         cell.textContent = u.toFixed(1) + '%';
         cell.style.fontWeight = '600';
         cell.style.color = u > 100 ? 'var(--red)' : u > 80 ? 'var(--orange)' : 'var(--green)';
+      });
+      // Update aging ratio in table
+      const agingCells = document.querySelectorAll(`.stock-aging[data-code="${code}"]`);
+      agingCells.forEach(cell => {
+        const am = getAgingMonths();
+        if (am !== '0') {
+          const ar = item.aging_ratio || 0;
+          cell.textContent = ar.toFixed(1) + '%';
+          cell.style.fontWeight = '600';
+          cell.style.color = ar >= 50 ? 'var(--yellow)' : ar >= 30 ? 'var(--orange)' : ar > 0 ? 'var(--text-secondary)' : 'var(--text-muted)';
+        } else {
+          cell.textContent = '-';
+          cell.style.color = 'var(--text-muted)';
+        }
       });
     });
 
@@ -1693,7 +2144,7 @@ function parseNodeId(id) {
 function updateBreadcrumb(node) {
   const bc = document.getElementById('breadcrumb');
   const parts = node.id.split('_');
-  let html = `<span onclick="showWelcome()">전체</span>`;
+  let html = `<span class="bc-btn" onclick="showWelcome()">🏠 전체</span>`;
 
   let currentId = '';
   for (const part of parts) {
@@ -1703,13 +2154,24 @@ function updateBreadcrumb(node) {
     if (foundNode) {
       const isLast = currentId === node.id;
       if (isLast) {
-        html += `<span class="sep">›</span><span class="current">${ICONS[foundNode.type]} ${foundNode.label}</span>`;
+        html += `<span class="sep">›</span><span class="bc-btn current">${ICONS[foundNode.type]} ${foundNode.label}</span>`;
       } else {
-        html += `<span class="sep">›</span><span onclick="navigateToNode('${currentId}')">${ICONS[foundNode.type]} ${foundNode.label}</span>`;
+        html += `<span class="sep">›</span><span class="bc-btn" onclick="navigateToNode('${currentId}')">${ICONS[foundNode.type]} ${foundNode.label}</span>`;
       }
     }
   }
   bc.innerHTML = html;
+}
+
+function updateAgingInfo(data) {
+  const info = document.getElementById('agingInfo');
+  const am = getAgingMonths();
+  if (am !== '0' && data && data.total_aging_ratio !== undefined) {
+    info.textContent = '(제조일자 기준 ' + am + '개월 이상 장기재고 비율: ' + data.total_aging_ratio + '%)';
+    info.style.color = data.total_aging_ratio >= 50 ? 'var(--yellow)' : 'var(--orange)';
+  } else {
+    info.textContent = '';
+  }
 }
 
 function findNodeById(nodes, id) {
@@ -1758,7 +2220,89 @@ function expandPathTo(id) {
 
 function showWelcome() {
   document.querySelectorAll('.tree-row.selected').forEach(r => r.classList.remove('selected'));
-  document.getElementById('breadcrumb').innerHTML = '<span class="current">전체 구조</span>';
+  document.getElementById('breadcrumb').innerHTML = '<span class="bc-btn current">🏠 전체</span>';
+
+  // Build virtual root node with all warehouses as children
+  const rootNode = {
+    id: 'ROOT', type: 'root', label: '전체',
+    children: treeData,
+    count: treeData.reduce((s, w) => s + w.count, 0)
+  };
+  lastSelectedNode = rootNode;
+
+  // Show table view
+  document.getElementById('viewTabs').style.display = 'flex';
+  const content = document.getElementById('detailContent');
+  const totalCount = rootNode.count;
+  let html = `<div class="detail-title">🏠 전체 거점 재고 현황</div>`;
+  html += `<div class="detail-subtitle">거점 ${treeData.length}개 | 총 지번 ${totalCount.toLocaleString()}개</div>`;
+  html += `<table class="data-table"><thead><tr>`;
+  html += `<th>#</th><th>거점</th><th>명칭</th><th>플랜트수</th><th>지번수</th><th>팔레트재고</th><th>Capa</th><th>적재율</th><th>장기재고 비율</th><th>분포</th>`;
+  html += `</tr></thead><tbody>`;
+  treeData.forEach((w, i) => {
+    const code = extractCode(w.label);
+    const pct = totalCount > 0 ? ((w.count / totalCount) * 100).toFixed(1) : 0;
+    const barW = Math.max(2, Math.min(200, (w.count / totalCount) * 200));
+    html += `<tr onclick="navigateToNode('${w.id}')" style="cursor:pointer">`;
+    html += `<td style="color:var(--text-muted)">${i+1}</td>`;
+    html += `<td class="clickable">📦 ${w.label}</td>`;
+    html += `<td class="stock-name" data-code="${code}" style="color:var(--text-muted);font-size:12px;">-</td>`;
+    html += `<td>${w.children ? w.children.length : '-'}</td>`;
+    html += `<td><b>${w.count.toLocaleString()}</b></td>`;
+    html += `<td class="stock-qty" data-code="${code}">-</td>`;
+    html += `<td class="stock-capa" data-code="${code}">-</td>`;
+    html += `<td class="stock-usage" data-code="${code}">-</td>`;
+    html += `<td class="stock-aging" data-code="${code}">-</td>`;
+    html += `<td><div style="display:flex;align-items:center;gap:8px;"><div style="width:${barW}px;height:6px;background:var(--accent);border-radius:3px;"></div><span style="font-size:11px;color:var(--text-muted)">${pct}%</span></div></td>`;
+    html += `</tr>`;
+  });
+  html += `</tbody></table>`;
+  content.innerHTML = html;
+
+  // Load warehouse-level heatmap
+  loadWarehouseHeatmap();
+  switchView(currentView);
+}
+
+async function loadWarehouseHeatmap() {
+  const params = { level: 'warehouse', aging_months: getAgingMonths() };
+  const qs = new URLSearchParams(params).toString();
+  try {
+    const resp = await fetch(`/api/hierarchy/stock?${qs}`);
+    const data = await resp.json();
+
+    // Map nodeIds for click navigation
+    data.items.forEach(item => {
+      const w = treeData.find(c => c.label === item.label || c.label.startsWith(item.label + ' '));
+      if (w) item.nodeId = w.id;
+    });
+
+    document.getElementById('heatmapContainer').style.display = currentView === 'heatmap' ? 'flex' : 'none';
+    buildHeatmap(data.items, data.total_qty, 'warehouse');
+    updateAgingInfo(data);
+
+    // Update table cells
+    data.items.forEach(item => {
+      const code = item.label;
+      const nameCells = document.querySelectorAll(`.stock-name[data-code="${code}"]`);
+      nameCells.forEach(cell => { cell.textContent = item.name || '-'; cell.style.color = item.name ? 'var(--text-secondary)' : 'var(--text-muted)'; });
+      document.querySelectorAll(`.stock-qty[data-code="${code}"]`).forEach(cell => { cell.textContent = formatNumber(item.qty); cell.style.color = 'var(--yellow)'; cell.style.fontWeight = '600'; });
+      document.querySelectorAll(`.stock-capa[data-code="${code}"]`).forEach(cell => { cell.textContent = formatNumber(item.maxcpc || 0); cell.style.color = 'var(--green)'; });
+      document.querySelectorAll(`.stock-usage[data-code="${code}"]`).forEach(cell => { const u = item.usage || 0; cell.textContent = u.toFixed(1) + '%'; cell.style.fontWeight = '600'; cell.style.color = u > 100 ? 'var(--red)' : u > 80 ? 'var(--orange)' : 'var(--green)'; });
+      document.querySelectorAll(`.stock-aging[data-code="${code}"]`).forEach(cell => {
+        const am = getAgingMonths();
+        if (am !== '0') { const ar = item.aging_ratio || 0; cell.textContent = ar.toFixed(1) + '%'; cell.style.fontWeight = '600'; cell.style.color = ar >= 50 ? 'var(--yellow)' : ar >= 30 ? 'var(--orange)' : ar > 0 ? 'var(--text-secondary)' : 'var(--text-muted)'; }
+        else { cell.textContent = '-'; cell.style.color = 'var(--text-muted)'; }
+      });
+    });
+  } catch(e) { console.error('Failed to load warehouse stock:', e); }
+}
+
+function showWelcomeOld() {
+  /* kept for reference - original welcome screen */
+  document.querySelectorAll('.tree-row.selected').forEach(r => r.classList.remove('selected'));
+  document.getElementById('breadcrumb').innerHTML = '<span class="bc-btn current">🏠 전체 구조</span>';
+  document.getElementById('agingInfo').textContent = '';
   document.getElementById('viewTabs').style.display = 'none';
   document.getElementById('heatmapContainer').style.display = 'none';
   document.getElementById('detailContent').style.display = 'block';
@@ -1972,7 +2516,10 @@ function expandLevel(level) {
 
   function onDrag(e) {
     const w = startW + (e.clientX - startX);
-    panel.style.width = Math.max(280, Math.min(800, w)) + 'px';
+    const newW = Math.max(280, Math.min(800, w));
+    panel.style.width = newW + 'px';
+    const btn = document.getElementById('treePanelToggle');
+    if (btn) btn.style.left = newW + 'px';
   }
 
   function onStop() {
@@ -1981,6 +2528,43 @@ function expandLevel(level) {
     document.removeEventListener('mouseup', onStop);
   }
 })();
+
+// ========================
+// Tree Panel Toggle
+// ========================
+let treePanelVisible = false;
+function toggleTreePanel() {
+  const panel = document.getElementById('treePanel');
+  const handle = document.getElementById('resizeHandle');
+  const btn = document.getElementById('treePanelToggle');
+  treePanelVisible = !treePanelVisible;
+  if (treePanelVisible) {
+    panel.classList.remove('collapsed');
+    panel.style.width = (panel._savedWidth || 420) + 'px';
+    handle.classList.remove('collapsed');
+    btn.classList.remove('collapsed');
+    btn.title = '트리 패널 숨기기';
+  } else {
+    panel._savedWidth = panel.offsetWidth;
+    panel.classList.add('collapsed');
+    handle.classList.add('collapsed');
+    btn.classList.add('collapsed');
+    btn.title = '트리 패널 보이기';
+  }
+  // Update toggle button position
+  setTimeout(() => {
+    if (treePanelVisible) {
+      btn.style.left = panel.offsetWidth + 'px';
+    } else {
+      btn.style.left = '0px';
+    }
+  }, 310);
+}
+// Position the toggle button on load
+window.addEventListener('load', () => {
+  const btn = document.getElementById('treePanelToggle');
+  btn.style.left = '0px';
+});
 
 // ========================
 // Init
